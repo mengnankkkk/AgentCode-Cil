@@ -3,11 +3,14 @@ package com.harmony.agent.cli;
 import com.harmony.agent.cli.completion.CommandCompleter;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.llm.LLMClient;
+import com.harmony.agent.task.TodoListManager;
+import org.jline.keymap.KeyMap;
 import org.jline.reader.*;
 import org.jline.reader.impl.DefaultParser;
 import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.InfoCmp;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
@@ -38,6 +41,7 @@ public class InteractiveCommand implements Callable<Integer> {
     private boolean running = true;
     private List<String> conversationHistory;
     private LLMClient llmClient;
+    private TodoListManager todoListManager;
 
     @Override
     public Integer call() {
@@ -62,8 +66,14 @@ public class InteractiveCommand implements Callable<Integer> {
                 .option(LineReader.Option.INSERT_TAB, false)
                 .build();
 
+            // Setup Ctrl+T key binding for viewing todolist
+            setupKeyBindings();
+
             // Initialize LLM client
             llmClient = new LLMClient(configManager);
+
+            // Initialize TodoListManager
+            todoListManager = new TodoListManager(llmClient, printer);
 
             // Show welcome message
             showWelcome();
@@ -107,6 +117,34 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
+     * Setup custom key bindings
+     */
+    private void setupKeyBindings() {
+        // Create a widget to handle Ctrl+T
+        lineReader.getWidgets().put("show-tasks", () -> {
+            // Display todolist when Ctrl+T is pressed
+            if (todoListManager.hasActiveTodoList()) {
+                terminal.writer().println();
+                todoListManager.displayFullTodoList();
+                lineReader.callWidget(LineReader.REDRAW_LINE);
+                lineReader.callWidget(LineReader.REDISPLAY);
+            } else {
+                terminal.writer().println();
+                printer.info("No active task plan. Use /plan <requirement> to create one.");
+                lineReader.callWidget(LineReader.REDRAW_LINE);
+                lineReader.callWidget(LineReader.REDISPLAY);
+            }
+            return true;
+        });
+
+        // Bind Ctrl+T to the widget
+        lineReader.getKeyMaps().get(LineReader.MAIN).bind(
+            new Reference("show-tasks"),
+            KeyMap.ctrl('T')
+        );
+    }
+
+    /**
      * Show welcome message
      */
     private void showWelcome() {
@@ -114,11 +152,14 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.header("HarmonySafeAgent Interactive Mode");
         printer.blank();
         printer.info("Welcome! You can:");
-        printer.info("  • Use slash commands: /analyze, /suggest, /help, /exit");
-        printer.info("  • Chat naturally: Ask questions about security, code analysis, etc.");
+        printer.info("  • Plan tasks: /plan <requirement> - Break down work into steps");
+        printer.info("  • Execute tasks: /next - Run current task");
+        printer.info("  • View tasks: /tasks or Ctrl+T - See all tasks");
+        printer.info("  • Use commands: /analyze, /suggest, /help, /exit");
+        printer.info("  • Chat naturally: Ask questions about security, code, etc.");
         printer.blank();
         printer.keyValue("AI Model", configManager.getConfig().getAi().getModel());
-        printer.keyValue("Mode", "Interactive REPL");
+        printer.keyValue("Mode", "Interactive REPL with Task Planning");
         printer.blank();
     }
 
@@ -183,6 +224,23 @@ public class InteractiveCommand implements Callable<Integer> {
                 showHistory();
                 break;
 
+            case "plan":
+                handlePlanCommand(args);
+                break;
+
+            case "next":
+            case "execute":
+                handleExecuteCommand();
+                break;
+
+            case "tasks":
+                handleTasksCommand();
+                break;
+
+            case "current":
+                handleCurrentTaskCommand();
+                break;
+
             case "analyze":
                 handleAnalyzeCommand(args);
                 break;
@@ -238,6 +296,64 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
+     * Handle /plan command - create a task breakdown from requirement
+     */
+    private void handlePlanCommand(String args) {
+        if (args.isEmpty()) {
+            printer.error("Usage: /plan <requirement>");
+            printer.info("Example: /plan Analyze src/main for security issues");
+            return;
+        }
+
+        // Check if there's already an active todo list
+        if (todoListManager.hasActiveTodoList()) {
+            printer.warning("There's already an active task plan.");
+            printer.info("Current progress: " + todoListManager.getProgressSummary());
+            printer.info("Use /next to continue, or /tasks to view all tasks");
+            return;
+        }
+
+        // Create new todo list
+        todoListManager.createTodoList(args);
+    }
+
+    /**
+     * Handle /next or /execute command - execute current task
+     */
+    private void handleExecuteCommand() {
+        if (!todoListManager.hasActiveTodoList()) {
+            printer.warning("No active task plan. Use /plan <requirement> to create one.");
+            return;
+        }
+
+        todoListManager.executeCurrentTask();
+    }
+
+    /**
+     * Handle /tasks command - show full todo list
+     */
+    private void handleTasksCommand() {
+        if (!todoListManager.hasActiveTodoList()) {
+            printer.warning("No active task plan. Use /plan <requirement> to create one.");
+            return;
+        }
+
+        todoListManager.displayFullTodoList();
+    }
+
+    /**
+     * Handle /current command - show current task only
+     */
+    private void handleCurrentTaskCommand() {
+        if (!todoListManager.hasActiveTodoList()) {
+            printer.warning("No active task plan. Use /plan <requirement> to create one.");
+            return;
+        }
+
+        todoListManager.displayCurrentTask();
+    }
+
+    /**
      * Handle /analyze command
      */
     private void handleAnalyzeCommand(String args) {
@@ -281,9 +397,20 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.subheader("Available Commands");
         printer.blank();
 
+        printer.subheader("Task Planning");
+        printer.keyValue("  /plan <requirement>", "Break down requirement into tasks");
+        printer.keyValue("  /next", "Execute current task");
+        printer.keyValue("  /tasks", "Show all tasks (or press Ctrl+T)");
+        printer.keyValue("  /current", "Show current task only");
+        printer.blank();
+
+        printer.subheader("Analysis & Tools");
         printer.keyValue("  /analyze <path>", "Analyze code for security issues");
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
+        printer.blank();
+
+        printer.subheader("General");
         printer.keyValue("  /config", "Show current configuration");
         printer.keyValue("  /history", "Show conversation history");
         printer.keyValue("  /clear", "Clear screen");
@@ -294,6 +421,12 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.subheader("Chat Mode");
         printer.info("  Just type naturally to chat with AI about security");
         printer.info("  Example: 'What are common buffer overflow patterns?'");
+        printer.blank();
+
+        printer.subheader("Quick Tips");
+        printer.info("  • Press Ctrl+T to view full task list");
+        printer.info("  • Press Ctrl+C to cancel current input");
+        printer.info("  • Press Ctrl+D to exit");
         printer.blank();
     }
 

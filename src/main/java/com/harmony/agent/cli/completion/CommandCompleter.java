@@ -20,9 +20,16 @@ import java.util.stream.Stream;
 public class CommandCompleter implements Completer {
 
     private static final List<CommandInfo> COMMANDS = List.of(
+        // Task Planning
+        new CommandInfo("/plan", "Break down requirement into tasks", false),
+        new CommandInfo("/next", "Execute current task", false),
+        new CommandInfo("/tasks", "Show all tasks", false),
+        new CommandInfo("/current", "Show current task only", false),
+        // Analysis & Tools
         new CommandInfo("/analyze", "Analyze code for security issues", true),
         new CommandInfo("/suggest", "Get AI suggestions for fixes", true),
         new CommandInfo("/refactor", "Get refactoring recommendations", true),
+        // General
         new CommandInfo("/config", "Show current configuration", false),
         new CommandInfo("/history", "Show conversation history", false),
         new CommandInfo("/clear", "Clear screen", false),
