@@ -27,6 +27,7 @@
         <logback.version>1.4.14</logback.version>
         <slf4j.version>2.0.9</slf4j.version>
         <jansi.version>2.4.1</jansi.version>
+        <jline.version>3.25.1</jline.version>
         <commons-lang3.version>3.14.0</commons-lang3.version>
         <commons-io.version>2.15.1</commons-io.version>
         <junit.version>5.10.1</junit.version>
@@ -79,6 +80,23 @@
             <groupId>org.fusesource.jansi</groupId>
             <artifactId>jansi</artifactId>
             <version>${jansi.version}</version>
+        </dependency>
+
+        <!-- JLine3 for Interactive CLI with Tab Completion -->
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline</artifactId>
+            <version>${jline.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline-terminal</artifactId>
+            <version>${jline.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline-reader</artifactId>
+            <version>${jline.version}</version>
         </dependency>
 
         <!-- Utilities -->

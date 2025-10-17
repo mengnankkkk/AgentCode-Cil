@@ -5,7 +5,8 @@
       "Bash(then mkdir -p \"E:/github/HarmonySafeAgent/claudedocs\")",
       "Bash(fi)",
       "Bash(mvn:*)",
-      "Bash(java -jar:*)"
+      "Bash(java -jar:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
