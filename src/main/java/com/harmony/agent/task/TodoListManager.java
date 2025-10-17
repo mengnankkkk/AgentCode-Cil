@@ -29,6 +29,14 @@ public class TodoListManager {
     public TodoList createTodoList(String requirement) {
         logger.info("Creating todo list for requirement: {}", requirement);
 
+        // Show LLM status
+        if (llmClient.isUsingRealLLM()) {
+            logger.info("Using real LLM providers (Orchestrator mode)");
+        } else {
+            logger.warn("Using fallback mode (rule-based task breakdown)");
+            printer.warning("⚠️ Running in fallback mode. Set OPENAI_API_KEY or CLAUDE_API_KEY for AI-powered task breakdown.");
+        }
+
         // Show thinking indicator
         printer.blank();
         printer.spinner("Analyzing requirement and breaking down into tasks...", false);
@@ -45,7 +53,11 @@ public class TodoListManager {
 
             // Show the created todo list
             printer.blank();
-            printer.success("Task breakdown completed!");
+            if (llmClient.isUsingRealLLM()) {
+                printer.success("✨ AI-powered task breakdown completed!");
+            } else {
+                printer.success("Task breakdown completed (fallback mode)");
+            }
             displayTodoList(true);
 
             // Auto-start first task

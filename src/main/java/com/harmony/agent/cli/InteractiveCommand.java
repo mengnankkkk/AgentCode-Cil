@@ -152,14 +152,24 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.header("HarmonySafeAgent Interactive Mode");
         printer.blank();
         printer.info("Welcome! You can:");
-        printer.info("  • Plan tasks: /plan <requirement> - Break down work into steps");
-        printer.info("  • Execute tasks: /next - Run current task");
+        printer.info("  • Plan tasks: /plan <requirement> - AI-powered task breakdown");
+        printer.info("  • Execute tasks: /next - Intelligent role routing");
         printer.info("  • View tasks: /tasks or Ctrl+T - See all tasks");
         printer.info("  • Use commands: /analyze, /suggest, /help, /exit");
         printer.info("  • Chat naturally: Ask questions about security, code, etc.");
         printer.blank();
+
+        // Show LLM architecture status
         printer.keyValue("AI Model", configManager.getConfig().getAi().getModel());
-        printer.keyValue("Mode", "Interactive REPL with Task Planning");
+        if (llmClient.isUsingRealLLM()) {
+            printer.keyValue("LLM Mode", "✨ Orchestrator (Multi-Role Architecture)");
+            printer.keyValue("Status", "\u001B[32mActive\u001B[0m - Using real LLM providers");
+        } else {
+            printer.keyValue("LLM Mode", "⚠️  Fallback (Rule-based)");
+            printer.keyValue("Status", "\u001B[33mFallback\u001B[0m - Set API keys for AI features");
+            printer.blank();
+            printer.info("💡 Tip: Set OPENAI_API_KEY or CLAUDE_API_KEY for AI-powered features");
+        }
         printer.blank();
     }
 
@@ -456,10 +466,28 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.subheader("Current Configuration");
         printer.blank();
 
+        // Basic config
         printer.keyValue("  LLM Model", configManager.getConfig().getAi().getModel());
         printer.keyValue("  API Provider", configManager.getConfig().getAi().getProvider());
         printer.keyValue("  Analysis Level", configManager.getConfig().getAnalysis().getLevel());
         printer.keyValue("  Parallel", String.valueOf(configManager.getConfig().getAnalysis().isParallel()));
+        printer.blank();
+
+        // LLM Architecture status
+        printer.subheader("LLM Architecture");
+        printer.blank();
+        if (llmClient.isUsingRealLLM()) {
+            printer.keyValue("  Architecture", "Dual-Strategy (Provider + Role)");
+            printer.keyValue("  Analyzer Role", "OpenAI GPT-3.5-turbo");
+            printer.keyValue("  Planner Role", "Claude 3 Sonnet");
+            printer.keyValue("  Coder Role", "Claude 3 Sonnet");
+            printer.keyValue("  Reviewer Role", "Claude 3 Opus");
+            printer.keyValue("  Status", "\u001B[32mActive\u001B[0m");
+        } else {
+            printer.keyValue("  Architecture", "Fallback Mode");
+            printer.keyValue("  Status", "\u001B[33mNo API Keys\u001B[0m");
+            printer.info("  Set OPENAI_API_KEY or CLAUDE_API_KEY to enable");
+        }
         printer.blank();
     }
 

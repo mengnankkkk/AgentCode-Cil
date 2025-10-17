@@ -1,60 +1,179 @@
 package com.harmony.agent.llm;
 
 import com.harmony.agent.config.ConfigManager;
+import com.harmony.agent.llm.model.LLMResponse;
+import com.harmony.agent.llm.orchestrator.ConversationContext;
+import com.harmony.agent.llm.orchestrator.LLMOrchestrator;
+import com.harmony.agent.llm.provider.ProviderFactory;
+import com.harmony.agent.llm.role.RoleFactory;
+import com.harmony.agent.task.TodoList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * LLM Client for chat and AI interactions
- * Basic implementation for Phase 2, will be enhanced in Phase 3
+ * LLM Client - Facade for LLM operations
+ * Now powered by the dual-strategy architecture (Provider + Role)
  */
 public class LLMClient {
     private static final Logger logger = LoggerFactory.getLogger(LLMClient.class);
 
     private final ConfigManager configManager;
+    private final LLMOrchestrator orchestrator;
+    private final boolean useRealLLM;
 
     public LLMClient(ConfigManager configManager) {
         this.configManager = configManager;
+
+        // Initialize orchestrator with providers and roles
+        try {
+            ProviderFactory providerFactory = createProviderFactory();
+            RoleFactory roleFactory = RoleFactory.createDefault();
+
+            this.orchestrator = LLMOrchestrator.builder(providerFactory, roleFactory)
+                .configureRole("analyzer", getProviderForRole("analyzer"), getModelForRole("analyzer"))
+                .configureRole("planner", getProviderForRole("planner"), getModelForRole("planner"))
+                .configureRole("coder", getProviderForRole("coder"), getModelForRole("coder"))
+                .configureRole("reviewer", getProviderForRole("reviewer"), getModelForRole("reviewer"))
+                .build();
+
+            this.useRealLLM = isAvailable();
+            if (useRealLLM) {
+                logger.info("LLMClient initialized with real LLM providers");
+            } else {
+                logger.warn("LLMClient initialized in fallback mode (no API keys configured)");
+            }
+        } catch (Exception e) {
+            logger.error("Failed to initialize LLM orchestrator", e);
+            throw new RuntimeException("Failed to initialize LLM client", e);
+        }
     }
 
     /**
-     * Chat with AI (placeholder for Phase 3)
+     * Create provider factory from configuration
+     */
+    private ProviderFactory createProviderFactory() {
+        String openaiKey = System.getenv("OPENAI_API_KEY");
+        String claudeKey = System.getenv("CLAUDE_API_KEY");
+
+        // Fallback to config if env vars not set
+        if (openaiKey == null || openaiKey.isEmpty()) {
+            openaiKey = configManager.getConfig().getAi().getApiKey();
+        }
+
+        return ProviderFactory.createDefault(openaiKey, claudeKey);
+    }
+
+    /**
+     * Get provider name for a role from config
+     */
+    private String getProviderForRole(String roleName) {
+        // Default mappings (can be overridden by config in Phase 3)
+        return switch (roleName) {
+            case "analyzer" -> "openai";
+            case "planner", "coder", "reviewer" -> "claude";
+            default -> "openai";
+        };
+    }
+
+    /**
+     * Get model name for a role from config
+     */
+    private String getModelForRole(String roleName) {
+        // Default mappings (can be overridden by config in Phase 3)
+        return switch (roleName) {
+            case "analyzer" -> "gpt-3.5-turbo";
+            case "planner" -> "claude-3-sonnet-20240229";
+            case "coder" -> "claude-3-sonnet-20240229";
+            case "reviewer" -> "claude-3-opus-20240229";
+            default -> configManager.getConfig().getAi().getModel();
+        };
+    }
+
+    /**
+     * Chat with AI
      * @param input User input
      * @param history Conversation history
      * @return AI response
      */
     public String chat(String input, List<String> history) {
-        // Placeholder implementation
         logger.info("LLM chat request: {}", input);
 
-        // For now, return a helpful message
-        return "AI chat functionality will be available in Phase 3. " +
-               "Currently, you can use slash commands like /analyze, /help, etc.";
+        if (!useRealLLM) {
+            return "AI chat functionality requires API keys. " +
+                   "Please set OPENAI_API_KEY or CLAUDE_API_KEY environment variable.";
+        }
+
+        // Use planner role for general chat (good reasoning ability)
+        ConversationContext context = new ConversationContext(input);
+
+        // Add history to context
+        if (history != null && !history.isEmpty()) {
+            context.setMetadata("chat_history", String.join("\n", history));
+        }
+
+        LLMResponse response = orchestrator.executeRole("planner", input, context);
+
+        if (response.isSuccess()) {
+            return response.getContent();
+        } else {
+            return "Error: " + response.getErrorMessage();
+        }
     }
 
     /**
      * Check if LLM is configured and available
      */
     public boolean isAvailable() {
-        String apiKey = configManager.getConfig().getAi().getApiKey();
-        return apiKey != null && !apiKey.isEmpty();
+        String openaiKey = System.getenv("OPENAI_API_KEY");
+        String claudeKey = System.getenv("CLAUDE_API_KEY");
+        String configKey = configManager.getConfig().getAi().getApiKey();
+
+        return (openaiKey != null && !openaiKey.isEmpty()) ||
+               (claudeKey != null && !claudeKey.isEmpty()) ||
+               (configKey != null && !configKey.isEmpty());
     }
 
     /**
      * Break down a user requirement into actionable tasks
+     * Now uses the Analyzer role from the new architecture
+     *
      * @param requirement User's high-level requirement
      * @return List of task descriptions
      */
     public List<String> breakdownRequirement(String requirement) {
         logger.info("Breaking down requirement: {}", requirement);
 
-        // For now, use a rule-based approach
-        // In Phase 3, this will call actual LLM API
+        if (!useRealLLM) {
+            // Fallback to rule-based approach if no API keys
+            return breakdownRequirementFallback(requirement);
+        }
+
+        try {
+            // Use the Analyzer role through orchestrator
+            TodoList todoList = orchestrator.analyzeRequirement(requirement);
+
+            if (todoList != null) {
+                List<String> tasks = new ArrayList<>();
+                todoList.getAllTasks().forEach(task -> tasks.add(task.getDescription()));
+                logger.info("Generated {} tasks from requirement using Analyzer role", tasks.size());
+                return tasks;
+            } else {
+                logger.warn("Orchestrator returned null, falling back to rule-based");
+                return breakdownRequirementFallback(requirement);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to breakdown requirement using LLM", e);
+            return breakdownRequirementFallback(requirement);
+        }
+    }
+
+    /**
+     * Fallback rule-based task breakdown
+     */
+    private List<String> breakdownRequirementFallback(String requirement) {
         List<String> tasks = new ArrayList<>();
 
         // Analyze requirement and generate tasks
@@ -91,12 +210,14 @@ public class LLMClient {
             tasks.add("Document changes and create summary");
         }
 
-        logger.info("Generated {} tasks from requirement", tasks.size());
+        logger.info("Generated {} tasks from requirement (fallback mode)", tasks.size());
         return tasks;
     }
 
     /**
      * Execute a single task and return the output
+     * Now intelligently routes to appropriate role based on task type
+     *
      * @param taskDescription The task to execute
      * @param context Additional context from previous tasks
      * @return Task execution result
@@ -104,9 +225,93 @@ public class LLMClient {
     public String executeTask(String taskDescription, String context) {
         logger.info("Executing task: {}", taskDescription);
 
-        // Placeholder - in Phase 3, this will use LLM to actually execute tasks
-        return String.format("Task '%s' executed successfully.\n%s",
-            taskDescription,
-            "This is a placeholder. Real execution will be implemented in Phase 3.");
+        if (!useRealLLM) {
+            return executeFallback(taskDescription);
+        }
+
+        try {
+            // Determine which role to use based on task description
+            String roleName = determineRoleForTask(taskDescription);
+
+            ConversationContext ctx = new ConversationContext(taskDescription);
+            if (context != null && !context.isEmpty()) {
+                ctx.setMetadata("previous_context", context);
+            }
+
+            LLMResponse response = orchestrator.executeRole(roleName, taskDescription, ctx);
+
+            if (response.isSuccess()) {
+                logger.info("Task executed successfully using {} role", roleName);
+                return response.getContent();
+            } else {
+                logger.warn("Task execution failed: {}, falling back", response.getErrorMessage());
+                return executeFallback(taskDescription);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to execute task using LLM", e);
+            return executeFallback(taskDescription);
+        }
+    }
+
+    /**
+     * Determine which role should handle a task
+     */
+    private String determineRoleForTask(String taskDescription) {
+        String lower = taskDescription.toLowerCase();
+
+        // Design, architecture, planning tasks
+        if (lower.contains("design") || lower.contains("architect") ||
+            lower.contains("plan") || lower.contains("strategy")) {
+            return "planner";
+        }
+
+        // Code implementation tasks
+        if (lower.contains("implement") || lower.contains("code") ||
+            lower.contains("write") || lower.contains("create") ||
+            lower.contains("develop")) {
+            return "coder";
+        }
+
+        // Review, analyze, verify tasks
+        if (lower.contains("review") || lower.contains("verify") ||
+            lower.contains("check") || lower.contains("validate")) {
+            return "reviewer";
+        }
+
+        // Analysis tasks
+        if (lower.contains("analyze") || lower.contains("identify") ||
+            lower.contains("find") || lower.contains("detect")) {
+            return "analyzer";
+        }
+
+        // Default to planner for general tasks
+        return "planner";
+    }
+
+    /**
+     * Fallback execution for when LLM is not available
+     */
+    private String executeFallback(String taskDescription) {
+        return String.format(
+            "Task '%s' queued for execution.\n" +
+            "Note: Real LLM execution requires API keys. " +
+            "Set OPENAI_API_KEY or CLAUDE_API_KEY environment variable.\n" +
+            "Current mode: Fallback/Demo mode",
+            taskDescription
+        );
+    }
+
+    /**
+     * Get the orchestrator (for advanced usage)
+     */
+    public LLMOrchestrator getOrchestrator() {
+        return orchestrator;
+    }
+
+    /**
+     * Check if using real LLM or fallback mode
+     */
+    public boolean isUsingRealLLM() {
+        return useRealLLM;
     }
 }

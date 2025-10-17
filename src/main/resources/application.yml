@@ -9,6 +9,50 @@ ai:
   temperature: 0.3
   base_url: https://api.openai.com/v1
 
+  # Multiple Provider Support (Phase 3)
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
+      base_url: https://api.openai.com/v1
+      models:
+        fast: gpt-3.5-turbo
+        standard: gpt-4-turbo
+        premium: gpt-4
+
+    claude:
+      api_key: ${CLAUDE_API_KEY}
+      base_url: https://api.anthropic.com/v1
+      models:
+        fast: claude-3-haiku-20240307
+        standard: claude-3-sonnet-20240229
+        premium: claude-3-opus-20240229
+
+  # Role-based Model Selection
+  roles:
+    analyzer:
+      provider: openai
+      model: fast  # Use fast model for quick analysis
+      temperature: 0.3
+      max_tokens: 1000
+
+    planner:
+      provider: claude
+      model: standard  # Use standard model for design
+      temperature: 0.5
+      max_tokens: 2500
+
+    coder:
+      provider: claude
+      model: standard  # Use standard model for code generation
+      temperature: 0.2
+      max_tokens: 3000
+
+    reviewer:
+      provider: claude
+      model: premium  # Use premium model for thorough review
+      temperature: 0.7
+      max_tokens: 2500
+
 analysis:
   level: standard  # quick | standard | deep
   parallel: true
