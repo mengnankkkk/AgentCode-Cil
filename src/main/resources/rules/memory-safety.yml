@@ -1,0 +1,80 @@
+rules:
+  - id: double-free
+    patterns:
+      - pattern: |
+          free($PTR);
+          ...
+          free($PTR);
+    message: "Potential double-free detected. Memory is freed twice."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: memory
+      cwe: "CWE-415: Double Free"
+      confidence: HIGH
+
+  - id: use-after-free
+    patterns:
+      - pattern: |
+          free($PTR);
+          ...
+          $PTR->...
+    message: "Potential use-after-free. Pointer is used after being freed."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: memory
+      cwe: "CWE-416: Use After Free"
+      confidence: MEDIUM
+
+  - id: memory-leak-malloc
+    patterns:
+      - pattern: |
+          $PTR = malloc(...);
+          ...
+      - pattern-not: |
+          $PTR = malloc(...);
+          ...
+          free($PTR);
+    message: "Potential memory leak. Allocated memory is not freed."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: memory-leak
+      cwe: "CWE-401: Missing Release of Memory after Effective Lifetime"
+      confidence: LOW
+
+  - id: null-deref-after-malloc
+    patterns:
+      - pattern: |
+          $PTR = malloc(...);
+          $PTR->...
+      - pattern-not: |
+          $PTR = malloc(...);
+          if ($PTR == NULL) { ... }
+          $PTR->...
+    message: "Potential null pointer dereference. Check malloc() return value before use."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: null-pointer
+      cwe: "CWE-476: NULL Pointer Dereference"
+      confidence: MEDIUM
+
+  - id: uninitialized-variable
+    pattern: |
+      $TYPE $VAR;
+      ...
+      return $VAR;
+    message: "Potential use of uninitialized variable."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: undefined-behavior
+      cwe: "CWE-457: Use of Uninitialized Variable"
+      confidence: LOW

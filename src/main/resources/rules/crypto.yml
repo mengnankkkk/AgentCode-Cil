@@ -1,0 +1,55 @@
+rules:
+  - id: weak-random-rand
+    pattern: rand()
+    message: "rand() is not cryptographically secure. Use a secure random generator for security-sensitive operations."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: crypto
+      cwe: "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator"
+      confidence: HIGH
+
+  - id: hardcoded-password
+    patterns:
+      - pattern: |
+          char *$VAR = "...";
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: .*(password|passwd|pwd|secret|key|token).*
+    message: "Potential hardcoded password or secret detected."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: hardcoded-secrets
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: MEDIUM
+
+  - id: weak-hash-md5
+    patterns:
+      - pattern-either:
+          - pattern: MD5(...)
+          - pattern: md5(...)
+    message: "MD5 is cryptographically broken. Use SHA-256 or stronger."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: weak-crypto
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      confidence: HIGH
+
+  - id: weak-hash-sha1
+    patterns:
+      - pattern-either:
+          - pattern: SHA1(...)
+          - pattern: sha1(...)
+    message: "SHA-1 is deprecated. Use SHA-256 or stronger."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: weak-crypto
+      cwe: "CWE-327"
+      confidence: HIGH

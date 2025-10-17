@@ -1,0 +1,57 @@
+rules:
+  - id: buffer-overflow-strcpy
+    pattern: strcpy($DEST, $SRC)
+    message: "Unsafe use of strcpy() can lead to buffer overflow. Use strncpy() or strlcpy() instead."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: buffer-overflow
+      cwe: "CWE-120: Buffer Copy without Checking Size of Input"
+      confidence: HIGH
+
+  - id: buffer-overflow-sprintf
+    pattern: sprintf($DEST, ...)
+    message: "Unsafe use of sprintf() can lead to buffer overflow. Use snprintf() instead."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: buffer-overflow
+      cwe: "CWE-120"
+      confidence: HIGH
+
+  - id: buffer-overflow-gets
+    pattern: gets($BUF)
+    message: "gets() is extremely dangerous and should never be used. Use fgets() instead."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: buffer-overflow
+      cwe: "CWE-120"
+      confidence: HIGH
+
+  - id: buffer-overflow-strcat
+    pattern: strcat($DEST, $SRC)
+    message: "Unsafe use of strcat() can lead to buffer overflow. Use strncat() or strlcat() instead."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: buffer-overflow
+      cwe: "CWE-120"
+      confidence: HIGH
+
+  - id: format-string-vulnerability
+    patterns:
+      - pattern: printf($VAR)
+      - pattern-not: printf("...")
+    message: "Potential format string vulnerability. Always use printf(\"%s\", var) instead of printf(var)."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: format-string
+      cwe: "CWE-134: Use of Externally-Controlled Format String"
+      confidence: MEDIUM

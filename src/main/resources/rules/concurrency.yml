@@ -1,0 +1,50 @@
+rules:
+  - id: race-condition-check-then-use
+    patterns:
+      - pattern: |
+          if (access($PATH, ...) == 0) {
+            ...
+            open($PATH, ...);
+          }
+    message: "Potential TOCTOU (Time-of-check Time-of-use) race condition. File state may change between check and use."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: race-condition
+      cwe: "CWE-367: Time-of-check Time-of-use Race Condition"
+      confidence: MEDIUM
+
+  - id: unsafe-signal-handler
+    patterns:
+      - pattern: |
+          void $HANDLER(int $SIG) {
+            ...
+            printf(...);
+            ...
+          }
+    message: "Signal handler uses async-signal-unsafe function. This can lead to undefined behavior."
+    severity: WARNING
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: concurrency
+      cwe: "CWE-479: Signal Handler Use of a Non-reentrant Function"
+      confidence: MEDIUM
+
+  - id: missing-mutex-lock
+    patterns:
+      - pattern: |
+          $GLOBAL_VAR = ...;
+      - pattern-not-inside: |
+          pthread_mutex_lock(...);
+          ...
+          pthread_mutex_unlock(...);
+    message: "Potential race condition. Global variable modified without mutex protection."
+    severity: INFO
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: thread-safety
+      cwe: "CWE-362: Concurrent Execution using Shared Resource with Improper Synchronization"
+      confidence: LOW

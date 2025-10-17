@@ -1,0 +1,48 @@
+rules:
+  - id: command-injection
+    patterns:
+      - pattern-either:
+          - pattern: system($CMD)
+          - pattern: popen($CMD, ...)
+          - pattern: execl($CMD, ...)
+      - pattern-not: system("...")
+      - pattern-not: popen("...", ...)
+    message: "Potential command injection. Avoid using system/popen/exec with user input."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-78: OS Command Injection"
+      confidence: MEDIUM
+
+  - id: path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: fopen($PATH, ...)
+          - pattern: open($PATH, ...)
+      - metavariable-pattern:
+          metavariable: $PATH
+          patterns:
+            - pattern-regex: ".*\\.\\..*"
+    message: "Potential path traversal vulnerability. Validate and sanitize file paths."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: path-traversal
+      cwe: "CWE-22: Path Traversal"
+      confidence: LOW
+
+  - id: sql-injection
+    patterns:
+      - pattern: |
+          sprintf($BUF, "SELECT ... WHERE ... = '%s'", $INPUT);
+    message: "Potential SQL injection. Use parameterized queries instead of string formatting."
+    severity: ERROR
+    languages: [c, cpp]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-89: SQL Injection"
+      confidence: MEDIUM

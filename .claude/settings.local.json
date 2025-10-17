@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(if [ ! -d \"E:/github/HarmonySafeAgent/claudedocs\" ])",
+      "Bash(then mkdir -p \"E:/github/HarmonySafeAgent/claudedocs\")",
+      "Bash(fi)",
+      "Bash(mvn:*)",
+      "Bash(java -jar:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
