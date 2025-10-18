@@ -56,6 +56,20 @@
             <version>${gson.version}</version>
         </dependency>
 
+        <!-- Guava for Caching -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>33.0.0-jre</version>
+        </dependency>
+
+        <!-- Freemarker for HTML Report Generation -->
+        <dependency>
+            <groupId>org.freemarker</groupId>
+            <artifactId>freemarker</artifactId>
+            <version>2.3.32</version>
+        </dependency>
+
         <!-- YAML Configuration -->
         <dependency>
             <groupId>org.yaml</groupId>

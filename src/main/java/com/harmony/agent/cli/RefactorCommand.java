@@ -1,11 +1,17 @@
 package com.harmony.agent.cli;
 
+import com.harmony.agent.config.ConfigManager;
+import com.harmony.agent.core.ai.CodeSlicer;
+import com.harmony.agent.core.ai.RustMigrationAdvisor;
+import com.harmony.agent.llm.provider.LLMProvider;
+import com.harmony.agent.llm.provider.ProviderFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.Callable;
 
@@ -39,6 +45,18 @@ public class RefactorCommand implements Callable<Integer> {
         description = "Output directory for refactored code"
     )
     private String outputDir;
+
+    @Option(
+        names = {"-f", "--file"},
+        description = "Source file for Rust migration analysis (required for rust-migration type)"
+    )
+    private String targetFile;
+
+    @Option(
+        names = {"-l", "--line"},
+        description = "Line number in the file (required for rust-migration type)"
+    )
+    private Integer lineNumber;
 
     @Override
     public Integer call() {
@@ -95,51 +113,126 @@ public class RefactorCommand implements Callable<Integer> {
         return 0;
     }
 
-    private int handleRustMigration(ConsolePrinter printer) throws InterruptedException {
-        // TODO: Phase 4 - Implement Rust migration suggestions
-        printer.spinner("Generating Rust migration advice...", false);
-        Thread.sleep(1500);
-        printer.spinner("Generating Rust migration advice", true);
+    private int handleRustMigration(ConsolePrinter printer) {
+        try {
+            // 验证必需参数
+            if (targetFile == null || lineNumber == null) {
+                printer.error("Rust migration requires --file and --line options");
+                printer.blank();
+                printer.info("Usage:");
+                printer.info("  harmony-agent refactor <source-path> --type rust-migration -f <file> -l <line>");
+                printer.blank();
+                printer.info("Example:");
+                printer.info("  harmony-agent refactor /path/to/bzip2 --type rust-migration -f bzlib.c -l 234");
+                return 1;
+            }
 
-        printer.blank();
-        printer.subheader("Rust Migration Assessment");
+            // 解析文件路径
+            Path basePath = Paths.get(sourcePath);
+            Path filePath;
 
-        printer.keyValue("  Recommendation", "✅ Migration Recommended");
-        printer.keyValue("  Confidence", "High (0.92)");
-        printer.keyValue("  Estimated Effort", "Medium");
-        printer.blank();
+            // 判断targetFile是相对路径还是绝对路径
+            Path targetPath = Paths.get(targetFile);
+            if (targetPath.isAbsolute()) {
+                filePath = targetPath;
+            } else {
+                // 如果sourcePath是文件，使用其父目录
+                if (Files.isRegularFile(basePath)) {
+                    filePath = basePath.getParent().resolve(targetFile);
+                } else {
+                    filePath = basePath.resolve(targetFile);
+                }
+            }
 
-        System.out.println("  📋 Migration Benefits:");
-        System.out.println("    • Eliminate memory safety issues");
-        System.out.println("    • Remove 90%+ of current security vulnerabilities");
-        System.out.println("    • Improved performance potential");
-        System.out.println("    • Better error handling");
+            // 验证文件存在
+            if (!Files.exists(filePath)) {
+                printer.error("File not found: " + filePath);
+                printer.info("Looking in: " + filePath.toAbsolutePath());
+                return 1;
+            }
 
-        printer.blank();
-        System.out.println("  ⚠️  Migration Challenges:");
-        System.out.println("    • Learning curve for Rust");
-        System.out.println("    • Need to redesign some APIs");
-        System.out.println("    • Testing and validation required");
+            if (!Files.isRegularFile(filePath)) {
+                printer.error("Not a regular file: " + filePath);
+                return 1;
+            }
 
-        printer.blank();
-        System.out.println("  🗺️  Migration Steps:");
-        System.out.println("    1. Identify core modules for migration");
-        System.out.println("    2. Create Rust equivalents with FFI");
-        System.out.println("    3. Incremental replacement");
-        System.out.println("    4. Comprehensive testing");
+            // 获取配置管理器
+            ConfigManager configManager = parent.getConfigManager();
 
-        printer.blank();
-        printer.subheader("Example Rust Code");
-        System.out.println("```rust");
-        System.out.println("// C code: char* dest = malloc(size);");
-        System.out.println("// Rust equivalent:");
-        System.out.println("let dest: Vec<u8> = Vec::with_capacity(size);");
-        System.out.println("// Memory automatically freed when dest goes out of scope");
-        System.out.println("```");
+            // 创建LLMProvider
+            String openaiKey = System.getenv("OPENAI_API_KEY");
+            if (openaiKey == null || openaiKey.isEmpty()) {
+                openaiKey = configManager.getConfig().getAi().getApiKey();
+            }
 
-        printer.blank();
-        printer.info("💡 Tip: See full migration guide in the generated report");
+            String claudeKey = System.getenv("CLAUDE_API_KEY");
+            ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey);
 
-        return 0;
+            String providerName = configManager.getConfig().getAi().getProvider();
+            LLMProvider provider;
+            try {
+                provider = factory.getProvider(providerName);
+            } catch (IllegalArgumentException e) {
+                printer.error("LLM provider not configured: " + providerName);
+                printer.blank();
+                printer.info("Available providers: openai, claude");
+                printer.info("Please configure API keys:");
+                printer.info("  - Set OPENAI_API_KEY environment variable, or");
+                printer.info("  - Set CLAUDE_API_KEY environment variable, or");
+                printer.info("  - Configure in config.yaml");
+                return 1;
+            }
+
+            if (!provider.isAvailable()) {
+                printer.error("LLM provider not available: " + providerName);
+                printer.blank();
+                printer.info("Please configure API keys:");
+                printer.info("  - OpenAI: Set OPENAI_API_KEY environment variable");
+                printer.info("  - Claude: Set CLAUDE_API_KEY environment variable");
+                printer.info("  - Or configure in config.yaml under ai.api_key");
+                return 1;
+            }
+
+            // 创建RustMigrationAdvisor
+            CodeSlicer codeSlicer = new CodeSlicer();
+            String model = configManager.getConfig().getAi().getModel();
+            RustMigrationAdvisor advisor = new RustMigrationAdvisor(provider, codeSlicer, model);
+
+            // 显示分析开始
+            printer.header("Rust Migration Analysis");
+            printer.info("File: " + filePath.getFileName());
+            printer.info("Line: " + lineNumber);
+            printer.info("Provider: " + provider.getProviderName());
+            printer.info("Model: " + model);
+            printer.blank();
+
+            // 生成建议
+            printer.spinner("Analyzing C code and generating Rust migration advice...", false);
+            String suggestion = advisor.getMigrationSuggestion(filePath, lineNumber);
+            printer.spinner("Analysis complete", true);
+
+            printer.blank();
+
+            // 输出建议
+            if (suggestion.startsWith("❌")) {
+                printer.error(suggestion);
+                return 1;
+            } else {
+                // 直接输出Markdown内容（不添加额外格式）
+                System.out.println(suggestion);
+                printer.blank();
+                printer.success("Migration suggestion generated successfully");
+                printer.blank();
+                printer.info("💡 Tip: Copy the Rust code above and adapt it to your project");
+                return 0;
+            }
+
+        } catch (Exception e) {
+            printer.error("Failed to generate Rust migration suggestion: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+            return 1;
+        }
     }
 }

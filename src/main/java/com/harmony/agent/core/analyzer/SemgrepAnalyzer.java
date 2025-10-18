@@ -157,21 +157,67 @@ public class SemgrepAnalyzer implements Analyzer {
             return new ArrayList<>();
         }
 
-        // Semgrep can analyze multiple files efficiently
-        // For simplicity, analyze each file separately
-        List<SecurityIssue> allIssues = new ArrayList<>();
-
-        for (Path file : files) {
-            try {
-                List<SecurityIssue> issues = analyze(file);
-                allIssues.addAll(issues);
-            } catch (AnalyzerException e) {
-                logger.error("Failed to analyze file: {}", file, e);
-                // Continue with next file
-            }
+        if (!isAvailable()) {
+            throw new AnalyzerException("Semgrep is not available. Please install semgrep: pip install semgrep");
         }
 
-        return allIssues;
+        // Semgrep can analyze multiple files efficiently in a single invocation
+        logger.info("Analyzing {} files with Semgrep in batch mode", files.size());
+
+        try {
+            List<String> command = buildBatchSemgrepCommand(files);
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(false);
+            Process process = pb.start();
+
+            StringBuilder output = new StringBuilder();
+            StringBuilder errorOutput = new StringBuilder();
+
+            // Read stdout
+            Thread stdoutThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+                } catch (IOException e) {
+                    logger.error("Error reading stdout", e);
+                }
+            });
+
+            // Read stderr
+            Thread stderrThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        errorOutput.append(line).append("\n");
+                    }
+                } catch (IOException e) {
+                    logger.error("Error reading stderr", e);
+                }
+            });
+
+            stdoutThread.start();
+            stderrThread.start();
+
+            int exitCode = process.waitFor();
+            stdoutThread.join();
+            stderrThread.join();
+
+            logger.debug("Semgrep batch exit code: {}", exitCode);
+
+            if (errorOutput.length() > 0) {
+                logger.debug("Semgrep stderr: {}", errorOutput);
+            }
+
+            return parseSemgrepOutput(output.toString());
+
+        } catch (IOException | InterruptedException e) {
+            throw new AnalyzerException("Failed to run Semgrep in batch mode", e);
+        }
     }
 
     /**
@@ -195,6 +241,34 @@ public class SemgrepAnalyzer implements Analyzer {
         }
 
         command.add(file.toString());
+
+        return command;
+    }
+
+    /**
+     * Build Semgrep command for batch file analysis
+     */
+    private List<String> buildBatchSemgrepCommand(List<Path> files) {
+        List<String> command = new ArrayList<>();
+        command.add(semgrepPath);
+        command.add("--json");
+        command.add("--quiet");
+        command.add("--disable-version-check");
+
+        // Use custom rules if available
+        if (Files.exists(rulesDir)) {
+            command.add("--config");
+            command.add(rulesDir.toString());
+        } else {
+            // Use default security rules
+            command.add("--config");
+            command.add("auto");
+        }
+
+        // Add all file paths
+        for (Path file : files) {
+            command.add(file.toString());
+        }
 
         return command;
     }

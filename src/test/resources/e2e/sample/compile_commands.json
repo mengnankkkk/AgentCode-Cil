@@ -1,0 +1,7 @@
+[
+  {
+    "directory": "/test/sample",
+    "command": "gcc -c -o vulnerable.o vulnerable.c",
+    "file": "vulnerable.c"
+  }
+]

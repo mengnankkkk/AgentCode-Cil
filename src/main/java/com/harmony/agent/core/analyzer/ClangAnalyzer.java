@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.*;
 
 /**
  * Clang-Tidy static analyzer integration
@@ -29,14 +30,35 @@ public class ClangAnalyzer implements Analyzer {
     private static final Logger logger = LoggerFactory.getLogger(ClangAnalyzer.class);
 
     private final String clangPath;
+    private final String compileCommandsPath;
+    private final ExecutorService executorService;
 
     public ClangAnalyzer() {
         ConfigManager configManager = ConfigManager.getInstance();
         this.clangPath = configManager.getConfig().getTools().getClangPath();
+        this.compileCommandsPath = null;
+        this.executorService = null; // Will use sequential execution
     }
 
     public ClangAnalyzer(String clangPath) {
+        this(clangPath, null, null);
+    }
+
+    public ClangAnalyzer(String clangPath, String compileCommandsPath) {
+        this(clangPath, compileCommandsPath, null);
+    }
+
+    /**
+     * Constructor with ExecutorService for parallel file analysis
+     *
+     * @param clangPath Path to clang-tidy executable
+     * @param compileCommandsPath Path to compile_commands.json (optional)
+     * @param executorService ExecutorService for parallel execution (optional, uses sequential if null)
+     */
+    public ClangAnalyzer(String clangPath, String compileCommandsPath, ExecutorService executorService) {
         this.clangPath = clangPath;
+        this.compileCommandsPath = compileCommandsPath;
+        this.executorService = executorService;
     }
 
     @Override
@@ -79,26 +101,105 @@ public class ClangAnalyzer implements Analyzer {
 
     @Override
     public List<SecurityIssue> analyze(Path file) throws AnalyzerException {
-        if (!Files.exists(file)) {
-            throw new AnalyzerException("File not found: " + file);
+        return analyzeSingleFile(file);
+    }
+
+    @Override
+    public List<SecurityIssue> analyzeAll(List<Path> files) throws AnalyzerException {
+        if (files.isEmpty()) {
+            return new ArrayList<>();
         }
 
         if (!isAvailable()) {
             throw new AnalyzerException("Clang-Tidy is not available. Please install clang-tidy.");
         }
 
-        logger.info("Analyzing file with Clang-Tidy: {}", file);
+        // Use parallel execution if ExecutorService is provided
+        if (executorService != null) {
+            return analyzeParallel(files);
+        } else {
+            return analyzeSequential(files);
+        }
+    }
+
+    /**
+     * Analyze files in parallel using ExecutorService
+     */
+    private List<SecurityIssue> analyzeParallel(List<Path> files) throws AnalyzerException {
+        logger.info("Analyzing {} files with Clang-Tidy in parallel", files.size());
+
+        // Create analysis tasks for each file
+        List<Callable<List<SecurityIssue>>> tasks = new ArrayList<>();
+        for (Path file : files) {
+            tasks.add(() -> analyzeSingleFile(file));
+        }
+
+        // Thread-safe list to collect results
+        List<SecurityIssue> allIssues = new CopyOnWriteArrayList<>();
 
         try {
-            // Run clang-tidy with security checks
-            ProcessBuilder pb = new ProcessBuilder(
-                clangPath,
-                "-checks=-*,clang-analyzer-*,bugprone-*,cert-*,concurrency-*",
-                "--export-fixes=-",
-                "--format-style=json",
-                file.toString()
-            );
+            // Submit all tasks and wait for completion
+            List<Future<List<SecurityIssue>>> futures = executorService.invokeAll(tasks);
 
+            // Collect results from all futures
+            for (Future<List<SecurityIssue>> future : futures) {
+                try {
+                    allIssues.addAll(future.get());
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    if (cause instanceof AnalyzerException) {
+                        logger.error("Failed to analyze a file", cause);
+                    } else {
+                        logger.error("Unexpected error during file analysis", cause);
+                    }
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AnalyzerException("Clang analysis was interrupted", e);
+        }
+
+        logger.info("Parallel Clang analysis complete, found {} issues", allIssues.size());
+        return new ArrayList<>(allIssues);
+    }
+
+    /**
+     * Analyze files sequentially (fallback when no ExecutorService)
+     */
+    private List<SecurityIssue> analyzeSequential(List<Path> files) {
+        logger.info("Analyzing {} files with Clang-Tidy sequentially", files.size());
+
+        List<SecurityIssue> allIssues = new ArrayList<>();
+        for (Path file : files) {
+            try {
+                List<SecurityIssue> issues = analyzeSingleFile(file);
+                allIssues.addAll(issues);
+            } catch (AnalyzerException e) {
+                logger.error("Failed to analyze file: {}", file, e);
+                // Continue with next file
+            }
+        }
+
+        logger.info("Sequential Clang analysis complete, found {} issues", allIssues.size());
+        return allIssues;
+    }
+
+    /**
+     * Analyze a single file with Clang-Tidy
+     * This is the core analysis logic extracted for parallel execution
+     */
+    private List<SecurityIssue> analyzeSingleFile(Path file) throws AnalyzerException {
+        if (!Files.exists(file)) {
+            throw new AnalyzerException("File not found: " + file);
+        }
+
+        logger.debug("Analyzing file with Clang-Tidy: {}", file);
+
+        try {
+            // Build clang-tidy command
+            List<String> command = buildClangCommand(file);
+
+            ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
@@ -113,30 +214,43 @@ public class ClangAnalyzer implements Analyzer {
             }
 
             int exitCode = process.waitFor();
-            logger.debug("Clang-Tidy exit code: {}", exitCode);
+            logger.debug("Clang-Tidy exit code for {}: {}", file.getFileName(), exitCode);
 
             return parseClangOutput(output.toString(), file);
 
         } catch (IOException | InterruptedException e) {
-            throw new AnalyzerException("Failed to run Clang-Tidy", e);
+            throw new AnalyzerException("Failed to run Clang-Tidy on " + file, e);
         }
     }
 
-    @Override
-    public List<SecurityIssue> analyzeAll(List<Path> files) throws AnalyzerException {
-        List<SecurityIssue> allIssues = new ArrayList<>();
+    /**
+     * Build Clang-Tidy command with appropriate options
+     */
+    private List<String> buildClangCommand(Path file) {
+        List<String> command = new ArrayList<>();
+        command.add(clangPath);
 
-        for (Path file : files) {
-            try {
-                List<SecurityIssue> issues = analyze(file);
-                allIssues.addAll(issues);
-            } catch (AnalyzerException e) {
-                logger.error("Failed to analyze file: {}", file, e);
-                // Continue with next file
+        // Security-focused checks
+        command.add("-checks=-*,clang-analyzer-*,bugprone-*,cert-*,concurrency-*");
+
+        // If compile_commands.json is available, use it
+        if (compileCommandsPath != null) {
+            logger.debug("Using compile_commands.json from: {}", compileCommandsPath);
+            // Get the directory containing compile_commands.json
+            Path compileCommandsDir = Path.of(compileCommandsPath).getParent();
+            if (compileCommandsDir != null) {
+                command.add("-p");
+                command.add(compileCommandsDir.toString());
             }
+        } else {
+            // Without compile_commands.json, add basic flags
+            command.add("--");
+            command.add("-std=c11");
         }
 
-        return allIssues;
+        command.add(file.toString());
+
+        return command;
     }
 
     /**

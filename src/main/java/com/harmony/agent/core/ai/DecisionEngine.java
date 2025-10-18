@@ -1,0 +1,304 @@
+package com.harmony.agent.core.ai;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import com.harmony.agent.config.ConfigManager;
+import com.harmony.agent.core.model.IssueSeverity;
+import com.harmony.agent.core.model.SecurityIssue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Decision Engine - AI-powered security issue validation and enhancement
+ * Orchestrates CodeSlicer, PromptBuilder, and CachedAiClient
+ */
+public class DecisionEngine {
+
+    private static final Logger logger = LoggerFactory.getLogger(DecisionEngine.class);
+
+    private final CachedAiValidationClient aiClient;
+    private final CodeSlicer codeSlicer;
+    private final Gson gson;
+
+    // Baseline confidence scores for each analyzer
+    private static final double CLANG_BASELINE_CONFIDENCE = 0.90;
+    private static final double SEMGREP_BASELINE_CONFIDENCE = 0.60;
+    private static final double REGEX_BASELINE_CONFIDENCE = 0.40;
+    private static final double AI_CONFIRMED_CONFIDENCE = 0.95;
+    private static final double AI_FAILED_CONFIDENCE_MULTIPLIER = 0.8;
+
+    /**
+     * Constructor
+     */
+    public DecisionEngine(ConfigManager configManager) {
+        this.codeSlicer = new CodeSlicer();
+        this.aiClient = new CachedAiValidationClient(
+            new AiValidationClient(configManager)
+        );
+        this.gson = new Gson();
+
+        logger.info("Decision Engine initialized with AI provider: {}",
+            aiClient.getProviderName());
+    }
+
+    /**
+     * Constructor with custom client (for testing)
+     */
+    public DecisionEngine(CachedAiValidationClient aiClient, CodeSlicer codeSlicer) {
+        this.aiClient = aiClient;
+        this.codeSlicer = codeSlicer;
+        this.gson = new Gson();
+    }
+
+    /**
+     * Enhance security issues with AI validation
+     *
+     * @param staticIssues Issues from static analyzers
+     * @return Enhanced issues list (false positives filtered out)
+     */
+    public List<SecurityIssue> enhanceIssues(List<SecurityIssue> staticIssues) {
+        logger.info("Starting AI enhancement for {} issues", staticIssues.size());
+
+        List<SecurityIssue> enhancedIssues = new ArrayList<>();
+        int validated = 0;
+        int filtered = 0;
+        int errors = 0;
+
+        for (SecurityIssue issue : staticIssues) {
+            if (needsAiValidation(issue)) {
+                try {
+                    SecurityIssue enhanced = validateWithAi(issue);
+                    if (enhanced != null) {
+                        enhancedIssues.add(enhanced);
+                        validated++;
+                    } else {
+                        filtered++;
+                        logger.info("AI filtered false positive: {}", issue.getTitle());
+                    }
+                } catch (Exception e) {
+                    logger.error("AI validation failed for issue: {}", issue.getId(), e);
+                    enhancedIssues.add(createFallbackIssue(issue));
+                    errors++;
+                }
+            } else {
+                // High-confidence analyzer (Clang-Tidy), skip AI validation
+                enhancedIssues.add(createHighConfidenceIssue(issue));
+            }
+        }
+
+        logger.info("AI enhancement complete: {} validated, {} filtered, {} errors, {} total output",
+            validated, filtered, errors, enhancedIssues.size());
+
+        // Log cache statistics
+        logCacheStats();
+
+        return enhancedIssues;
+    }
+
+    /**
+     * Determine if an issue needs AI validation
+     */
+    private boolean needsAiValidation(SecurityIssue issue) {
+        String analyzer = issue.getAnalyzer().toLowerCase();
+
+        // Semgrep: high false positive rate (20-40%)
+        if (analyzer.contains("semgrep")) {
+            return true;
+        }
+
+        // Regex: very high false positive rate (50-70%)
+        if (analyzer.contains("regex")) {
+            return true;
+        }
+
+        // Clang-Tidy: low false positive rate (5-10%)
+        // Only validate CRITICAL issues to save API costs
+        if (analyzer.contains("clang") &&
+            issue.getSeverity() == IssueSeverity.CRITICAL) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Validate issue with AI
+     *
+     * @return Enhanced issue if valid, null if false positive
+     */
+    private SecurityIssue validateWithAi(SecurityIssue issue) throws Exception {
+        // Get code context
+        Path filePath = Paths.get(issue.getLocation().getFilePath());
+        int lineNumber = issue.getLocation().getLineNumber();
+
+        String codeSlice = codeSlicer.getContextSlice(filePath, lineNumber);
+
+        // Build validation prompt
+        String prompt = PromptBuilder.buildIssueValidationPrompt(issue, codeSlice);
+
+        // Send to AI
+        String jsonResponse = aiClient.sendRequest(prompt, true);
+
+        // Parse response
+        AiValidationResponse validation = parseValidationResponse(jsonResponse);
+
+        if (validation.is_vulnerability) {
+            // AI confirmed - create enhanced issue
+            return createEnhancedIssue(issue, validation);
+        } else {
+            // AI marked as false positive
+            return null;
+        }
+    }
+
+    /**
+     * Parse AI validation response
+     */
+    private AiValidationResponse parseValidationResponse(String jsonResponse)
+            throws JsonSyntaxException {
+        try {
+            return gson.fromJson(jsonResponse, AiValidationResponse.class);
+        } catch (JsonSyntaxException e) {
+            logger.error("Failed to parse AI response as JSON: {}", jsonResponse);
+            throw e;
+        }
+    }
+
+    /**
+     * Create enhanced issue with AI validation
+     */
+    private SecurityIssue createEnhancedIssue(SecurityIssue original,
+                                              AiValidationResponse validation) {
+        // Parse AI suggested severity
+        IssueSeverity aiSeverity;
+        try {
+            aiSeverity = IssueSeverity.valueOf(validation.suggested_severity.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            logger.warn("Invalid severity from AI: {}, using original",
+                validation.suggested_severity);
+            aiSeverity = original.getSeverity();
+        }
+
+        // Build enhanced issue
+        return new SecurityIssue.Builder()
+            .id(original.getId())
+            .title(original.getTitle())
+            .description(original.getDescription())
+            .severity(aiSeverity)
+            .category(original.getCategory())
+            .location(original.getLocation())
+            .analyzer(original.getAnalyzer() + " + AI")
+            .metadata(original.getMetadata())
+            .metadata("ai_validated", true)
+            .metadata("ai_confidence", AI_CONFIRMED_CONFIDENCE)
+            .metadata("ai_explanation", validation.reason)
+            .metadata("original_severity", original.getSeverity().name())
+            .build();
+    }
+
+    /**
+     * Create high-confidence issue (no AI validation needed)
+     */
+    private SecurityIssue createHighConfidenceIssue(SecurityIssue original) {
+        double confidence = getBaselineConfidence(original.getAnalyzer());
+
+        return new SecurityIssue.Builder()
+            .id(original.getId())
+            .title(original.getTitle())
+            .description(original.getDescription())
+            .severity(original.getSeverity())
+            .category(original.getCategory())
+            .location(original.getLocation())
+            .analyzer(original.getAnalyzer())
+            .metadata(original.getMetadata())
+            .metadata("ai_validated", false)
+            .metadata("ai_confidence", confidence)
+            .metadata("validation_skipped", "High confidence analyzer")
+            .build();
+    }
+
+    /**
+     * Create fallback issue (AI validation failed)
+     */
+    private SecurityIssue createFallbackIssue(SecurityIssue original) {
+        double baseConfidence = getBaselineConfidence(original.getAnalyzer());
+        double fallbackConfidence = baseConfidence * AI_FAILED_CONFIDENCE_MULTIPLIER;
+
+        return new SecurityIssue.Builder()
+            .id(original.getId())
+            .title(original.getTitle())
+            .description(original.getDescription())
+            .severity(original.getSeverity())
+            .category(original.getCategory())
+            .location(original.getLocation())
+            .analyzer(original.getAnalyzer())
+            .metadata(original.getMetadata())
+            .metadata("ai_validated", false)
+            .metadata("ai_confidence", fallbackConfidence)
+            .metadata("validation_error", "AI validation failed, using static analysis only")
+            .build();
+    }
+
+    /**
+     * Get baseline confidence for analyzer
+     */
+    private double getBaselineConfidence(String analyzer) {
+        String lower = analyzer.toLowerCase();
+
+        if (lower.contains("clang")) {
+            return CLANG_BASELINE_CONFIDENCE;
+        } else if (lower.contains("semgrep")) {
+            return SEMGREP_BASELINE_CONFIDENCE;
+        } else if (lower.contains("regex")) {
+            return REGEX_BASELINE_CONFIDENCE;
+        }
+
+        return 0.5; // Default
+    }
+
+    /**
+     * Log cache statistics
+     */
+    private void logCacheStats() {
+        CachedAiValidationClient.CacheStats stats = aiClient.getStats();
+        logger.info("AI Cache Statistics: {}", stats);
+    }
+
+    /**
+     * Check if AI client is available
+     */
+    public boolean isAvailable() {
+        return aiClient.isAvailable();
+    }
+
+    /**
+     * Get cache statistics
+     */
+    public CachedAiValidationClient.CacheStats getCacheStats() {
+        return aiClient.getStats();
+    }
+
+    /**
+     * Clear AI response cache
+     */
+    public void clearCache() {
+        aiClient.clearCache();
+        codeSlicer.clearCache();
+    }
+
+    /**
+     * AI validation response model
+     */
+    private static class AiValidationResponse {
+        // Public fields for Gson deserialization (snake_case to match JSON)
+        public boolean is_vulnerability;
+        public String reason;
+        public String suggested_severity;
+    }
+}

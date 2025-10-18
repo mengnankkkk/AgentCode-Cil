@@ -1,6 +1,7 @@
 package com.harmony.agent.core;
 
 import com.harmony.agent.config.ConfigManager;
+import com.harmony.agent.core.ai.DecisionEngine;
 import com.harmony.agent.core.analyzer.Analyzer;
 import com.harmony.agent.core.analyzer.AnalyzerException;
 import com.harmony.agent.core.analyzer.ClangAnalyzer;
@@ -8,12 +9,14 @@ import com.harmony.agent.core.analyzer.SemgrepAnalyzer;
 import com.harmony.agent.core.analyzer.RegexAnalyzer;
 import com.harmony.agent.core.model.ScanResult;
 import com.harmony.agent.core.model.SecurityIssue;
+import com.harmony.agent.core.report.ReportGenerator;
 import com.harmony.agent.core.scanner.CodeScanner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -31,6 +34,9 @@ public class AnalysisEngine {
     private final CodeScanner scanner;
     private final List<Analyzer> analyzers;
     private final ExecutorService executorService;
+    private final DecisionEngine decisionEngine;
+    private final ReportGenerator reportGenerator;
+    private final boolean aiEnhancementEnabled;
 
     public AnalysisEngine(String sourcePath, AnalysisConfig config) {
         this.sourcePath = sourcePath;
@@ -42,7 +48,21 @@ public class AnalysisEngine {
         int threadCount = config.isParallel() ? config.getMaxThreads() : 1;
         this.executorService = Executors.newFixedThreadPool(threadCount);
 
-        logger.info("AnalysisEngine initialized with {} threads", threadCount);
+        // Initialize AI decision engine
+        this.decisionEngine = new DecisionEngine(ConfigManager.getInstance());
+        this.aiEnhancementEnabled = config.isAiEnhancementEnabled() &&
+                                    decisionEngine.isAvailable();
+
+        // Initialize report generator
+        this.reportGenerator = new ReportGenerator();
+
+        if (aiEnhancementEnabled) {
+            logger.info("AnalysisEngine initialized with {} threads + AI enhancement",
+                threadCount);
+        } else {
+            logger.info("AnalysisEngine initialized with {} threads (AI enhancement disabled)",
+                threadCount);
+        }
     }
 
     /**
@@ -51,20 +71,24 @@ public class AnalysisEngine {
     private List<Analyzer> initializeAnalyzers() {
         List<Analyzer> analyzers = new ArrayList<>();
 
-        // Add Clang analyzer if available
-        ClangAnalyzer clangAnalyzer = new ClangAnalyzer();
+        // Add Clang analyzer if available (with ExecutorService for parallel file analysis)
+        ClangAnalyzer clangAnalyzer = new ClangAnalyzer(
+            ConfigManager.getInstance().getConfig().getTools().getClangPath(),
+            config.getCompileCommandsPath(),
+            this.executorService  // Pass ExecutorService for parallel file processing
+        );
         if (clangAnalyzer.isAvailable()) {
             analyzers.add(clangAnalyzer);
-            logger.info("Clang analyzer enabled: {}", clangAnalyzer.getVersion());
+            logger.info("Clang analyzer enabled (parallel mode): {}", clangAnalyzer.getVersion());
         } else {
             logger.warn("Clang analyzer not available - ensure clang-tidy is installed");
         }
 
-        // Add Semgrep analyzer if available
+        // Add Semgrep analyzer if available (already optimized for batch processing)
         SemgrepAnalyzer semgrepAnalyzer = new SemgrepAnalyzer();
         if (semgrepAnalyzer.isAvailable()) {
             analyzers.add(semgrepAnalyzer);
-            logger.info("Semgrep analyzer enabled: {}", semgrepAnalyzer.getVersion());
+            logger.info("Semgrep analyzer enabled (batch mode): {}", semgrepAnalyzer.getVersion());
         } else {
             logger.warn("Semgrep analyzer not available - ensure semgrep is installed");
         }
@@ -101,6 +125,20 @@ public class AnalysisEngine {
         // Deduplicate issues
         allIssues = deduplicateIssues(allIssues);
 
+        // AI Enhancement: Validate issues and filter false positives
+        if (aiEnhancementEnabled) {
+            logger.info("Enhancing {} issues with AI validation...", allIssues.size());
+            int beforeCount = allIssues.size();
+            allIssues = decisionEngine.enhanceIssues(allIssues);
+            int afterCount = allIssues.size();
+            int filtered = beforeCount - afterCount;
+
+            logger.info("AI enhancement complete: {} issues → {} issues ({} filtered)",
+                beforeCount, afterCount, filtered);
+        } else {
+            logger.debug("AI enhancement disabled, using static analysis results only");
+        }
+
         // Build result
         Instant endTime = Instant.now();
         ScanResult.Builder resultBuilder = new ScanResult.Builder()
@@ -119,10 +157,33 @@ public class AnalysisEngine {
         resultBuilder.addStatistic("total_issues", allIssues.size());
         resultBuilder.addStatistic("analyzers_count", analyzers.size());
 
+        // Add AI filtering statistics
+        if (aiEnhancementEnabled) {
+            int beforeCount = allIssues.size() + (allIssues.size() > 0 ?
+                (int) allIssues.stream()
+                    .filter(i -> i.getMetadata().containsKey("ai_validated"))
+                    .count() : 0);
+            int filtered = beforeCount - allIssues.size();
+            resultBuilder.addStatistic("ai_filtered_count", filtered);
+        }
+
         ScanResult result = resultBuilder.build();
 
         logger.info("Analysis complete. Found {} issues in {} files",
             allIssues.size(), files.size());
+
+        // Generate HTML report if output path specified
+        if (config.getOutputPath() != null && !config.getOutputPath().isBlank()) {
+            try {
+                Path outputPath = Paths.get(config.getOutputPath());
+                logger.info("Generating HTML report at: {}", outputPath);
+                reportGenerator.generate(result, outputPath);
+                logger.info("Report generated successfully: {}", outputPath);
+            } catch (Exception e) {
+                logger.error("Failed to generate HTML report", e);
+                // Don't fail the entire analysis if report generation fails
+            }
+        }
 
         return result;
     }
@@ -135,26 +196,94 @@ public class AnalysisEngine {
             throw new AnalyzerException("No analyzers available");
         }
 
+        // Select analyzers based on analysis level
+        List<Analyzer> selectedAnalyzers = selectAnalyzersByLevel();
+
+        if (selectedAnalyzers.isEmpty()) {
+            throw new AnalyzerException("No suitable analyzers for level: " + config.getLevel());
+        }
+
         List<SecurityIssue> allIssues = new ArrayList<>();
 
         if (config.isParallel()) {
             // Parallel analysis
-            allIssues = analyzeParallel(files);
+            allIssues = analyzeParallel(files, selectedAnalyzers);
         } else {
             // Sequential analysis
-            allIssues = analyzeSequential(files);
+            allIssues = analyzeSequential(files, selectedAnalyzers);
         }
 
         return allIssues;
     }
 
     /**
+     * Select analyzers based on analysis level
+     */
+    private List<Analyzer> selectAnalyzersByLevel() {
+        List<Analyzer> selected = new ArrayList<>();
+        String level = config.getLevel().toLowerCase();
+
+        logger.info("Selecting analyzers for level: {}", level);
+
+        switch (level) {
+            case "quick":
+                // Quick mode: Use only Semgrep (fast pattern matching)
+                for (Analyzer analyzer : analyzers) {
+                    if (analyzer.getName().equals("Semgrep")) {
+                        selected.add(analyzer);
+                        logger.info("Quick mode: Using {}", analyzer.getName());
+                    }
+                }
+                // Fallback to regex if semgrep not available
+                if (selected.isEmpty()) {
+                    for (Analyzer analyzer : analyzers) {
+                        if (analyzer.getName().contains("Regex")) {
+                            selected.add(analyzer);
+                            logger.info("Quick mode fallback: Using {}", analyzer.getName());
+                        }
+                    }
+                }
+                break;
+
+            case "standard":
+            case "deep":
+                // Standard/Deep mode: Use Semgrep + Clang-Tidy
+                for (Analyzer analyzer : analyzers) {
+                    if (analyzer.getName().equals("Semgrep") ||
+                        analyzer.getName().equals("Clang-Tidy")) {
+                        selected.add(analyzer);
+                        logger.info("{} mode: Using {}", level, analyzer.getName());
+                    }
+                }
+                // Add regex as additional check in deep mode
+                if (level.equals("deep")) {
+                    for (Analyzer analyzer : analyzers) {
+                        if (analyzer.getName().contains("Regex") &&
+                            !selected.contains(analyzer)) {
+                            selected.add(analyzer);
+                            logger.info("Deep mode: Also using {}", analyzer.getName());
+                        }
+                    }
+                }
+                break;
+
+            default:
+                // Unknown level: use all available analyzers
+                logger.warn("Unknown analysis level '{}', using all analyzers", level);
+                selected.addAll(analyzers);
+        }
+
+        logger.info("Selected {} analyzer(s) for execution", selected.size());
+        return selected;
+    }
+
+    /**
      * Sequential file analysis
      */
-    private List<SecurityIssue> analyzeSequential(List<Path> files) {
+    private List<SecurityIssue> analyzeSequential(List<Path> files, List<Analyzer> selectedAnalyzers) {
         List<SecurityIssue> allIssues = new ArrayList<>();
 
-        for (Analyzer analyzer : analyzers) {
+        for (Analyzer analyzer : selectedAnalyzers) {
             logger.info("Running analyzer: {}", analyzer.getName());
 
             for (Path file : files) {
@@ -173,11 +302,11 @@ public class AnalysisEngine {
     /**
      * Parallel file analysis
      */
-    private List<SecurityIssue> analyzeParallel(List<Path> files) {
+    private List<SecurityIssue> analyzeParallel(List<Path> files, List<Analyzer> selectedAnalyzers) {
         List<Future<List<SecurityIssue>>> futures = new ArrayList<>();
 
         // Submit analysis tasks for each analyzer
-        for (Analyzer analyzer : analyzers) {
+        for (Analyzer analyzer : selectedAnalyzers) {
             logger.info("Running analyzer in parallel: {}", analyzer.getName());
 
             Future<List<SecurityIssue>> future = executorService.submit(() -> {
@@ -275,20 +404,37 @@ public class AnalysisEngine {
         private final int maxThreads;
         private final int timeout;
         private final String compileCommandsPath;
+        private final boolean aiEnhancementEnabled;
+        private final String outputPath;
 
         public AnalysisConfig(String level, boolean incremental, boolean parallel,
                              int maxThreads, int timeout) {
-            this(level, incremental, parallel, maxThreads, timeout, null);
+            this(level, incremental, parallel, maxThreads, timeout, null, true, null);
         }
 
         public AnalysisConfig(String level, boolean incremental, boolean parallel,
                              int maxThreads, int timeout, String compileCommandsPath) {
+            this(level, incremental, parallel, maxThreads, timeout, compileCommandsPath, true, null);
+        }
+
+        public AnalysisConfig(String level, boolean incremental, boolean parallel,
+                             int maxThreads, int timeout, String compileCommandsPath,
+                             boolean aiEnhancementEnabled) {
+            this(level, incremental, parallel, maxThreads, timeout, compileCommandsPath,
+                aiEnhancementEnabled, null);
+        }
+
+        public AnalysisConfig(String level, boolean incremental, boolean parallel,
+                             int maxThreads, int timeout, String compileCommandsPath,
+                             boolean aiEnhancementEnabled, String outputPath) {
             this.level = level;
             this.incremental = incremental;
             this.parallel = parallel;
             this.maxThreads = maxThreads;
             this.timeout = timeout;
             this.compileCommandsPath = compileCommandsPath;
+            this.aiEnhancementEnabled = aiEnhancementEnabled;
+            this.outputPath = outputPath;
         }
 
         public static AnalysisConfig fromConfigManager() {
@@ -329,6 +475,14 @@ public class AnalysisEngine {
 
         public String getCompileCommandsPath() {
             return compileCommandsPath;
+        }
+
+        public boolean isAiEnhancementEnabled() {
+            return aiEnhancementEnabled;
+        }
+
+        public String getOutputPath() {
+            return outputPath;
         }
     }
 }

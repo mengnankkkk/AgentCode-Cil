@@ -128,8 +128,32 @@ public class AnalyzeCommand implements Callable<Integer> {
 
             printer.blank();
 
-            // Create analysis engine
-            AnalysisEngine.AnalysisConfig analysisConfig = AnalysisEngine.AnalysisConfig.fromConfigManager(compileCommandsPath);
+            // Create analysis engine with output path
+            AnalysisEngine.AnalysisConfig analysisConfig;
+            if (outputFile != null) {
+                // Custom config with output path
+                analysisConfig = new AnalysisEngine.AnalysisConfig(
+                    config.getAnalysis().getLevel(),
+                    config.getAnalysis().isIncremental() || incremental,
+                    config.getAnalysis().isParallel(),
+                    config.getAnalysis().getMaxThreads(),
+                    config.getAnalysis().getTimeout(),
+                    compileCommandsPath,
+                    !noAi,  // AI enhancement enabled unless --no-ai flag
+                    outputFile
+                );
+            } else {
+                // Use default config without output path
+                analysisConfig = new AnalysisEngine.AnalysisConfig(
+                    config.getAnalysis().getLevel(),
+                    config.getAnalysis().isIncremental() || incremental,
+                    config.getAnalysis().isParallel(),
+                    config.getAnalysis().getMaxThreads(),
+                    config.getAnalysis().getTimeout(),
+                    compileCommandsPath,
+                    !noAi  // AI enhancement enabled unless --no-ai flag
+                );
+            }
             AnalysisEngine engine = new AnalysisEngine(sourcePath, analysisConfig);
 
             try {
@@ -231,12 +255,13 @@ public class AnalyzeCommand implements Callable<Integer> {
                     printer.success("Analysis complete!");
                 }
 
-                if (!noAi) {
-                    printer.info("Use 'suggest' command for AI-enhanced recommendations (Phase 3)");
-                }
-
+                // Show report generation info
                 if (outputFile != null) {
-                    printer.info("Report will be saved to: " + outputFile + " (Phase 5)");
+                    printer.blank();
+                    printer.success("HTML report generated: " + outputFile);
+                    printer.info("Open the report in your browser to view detailed analysis with AI insights");
+                } else {
+                    printer.info("Use -o/--output option to generate an HTML report");
                 }
 
                 return result.hasCriticalIssues() ? 2 : 0;
