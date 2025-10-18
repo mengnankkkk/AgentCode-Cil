@@ -63,6 +63,12 @@ public class AnalyzeCommand implements Callable<Integer> {
     )
     private boolean noAi;
 
+    @Option(
+        names = {"--compile-commands"},
+        description = "Path to compile_commands.json (recommended for C/C++ analysis)"
+    )
+    private String compileCommandsPath;
+
     @Override
     public Integer call() {
         ConsolePrinter printer = parent.getPrinter();
@@ -74,6 +80,26 @@ public class AnalyzeCommand implements Callable<Integer> {
             if (!Files.exists(path)) {
                 printer.error("Source path does not exist: " + sourcePath);
                 return 1;
+            }
+
+            // Validate compile_commands.json if provided
+            Path compileCommandsFile = null;
+            if (compileCommandsPath != null) {
+                compileCommandsFile = Paths.get(compileCommandsPath);
+                if (!Files.exists(compileCommandsFile)) {
+                    printer.error("compile_commands.json not found: " + compileCommandsPath);
+                    printer.blank();
+                    printer.info("How to generate compile_commands.json:");
+                    printer.info("  CMake:  cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..");
+                    printer.info("  Bear:   bear -- make");
+                    printer.info("  Ninja:  ninja -t compdb > compile_commands.json");
+                    return 1;
+                }
+
+                if (!Files.isRegularFile(compileCommandsFile)) {
+                    printer.error("Not a regular file: " + compileCommandsPath);
+                    return 1;
+                }
             }
 
             // Get configuration
@@ -95,10 +121,15 @@ public class AnalyzeCommand implements Callable<Integer> {
             printer.info("Level: " + config.getAnalysis().getLevel());
             printer.info("Incremental: " + (incremental ? "enabled" : "disabled"));
             printer.info("Parallel: " + (config.getAnalysis().isParallel() ? "enabled" : "disabled"));
+
+            if (compileCommandsPath != null) {
+                printer.info("Compile Commands: " + compileCommandsPath);
+            }
+
             printer.blank();
 
             // Create analysis engine
-            AnalysisEngine.AnalysisConfig analysisConfig = AnalysisEngine.AnalysisConfig.fromConfigManager();
+            AnalysisEngine.AnalysisConfig analysisConfig = AnalysisEngine.AnalysisConfig.fromConfigManager(compileCommandsPath);
             AnalysisEngine engine = new AnalysisEngine(sourcePath, analysisConfig);
 
             try {

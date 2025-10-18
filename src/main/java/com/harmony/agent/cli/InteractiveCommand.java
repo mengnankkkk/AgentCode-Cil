@@ -4,6 +4,10 @@ import com.harmony.agent.cli.completion.CommandCompleter;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.llm.LLMClient;
 import com.harmony.agent.task.TodoListManager;
+import com.harmony.agent.tools.ToolExecutor;
+import com.harmony.agent.tools.result.AnalysisResult;
+import com.harmony.agent.tools.result.CompileResult;
+import com.harmony.agent.tools.result.TestResult;
 import org.jline.keymap.KeyMap;
 import org.jline.reader.*;
 import org.jline.reader.impl.DefaultParser;
@@ -77,6 +81,7 @@ public class InteractiveCommand implements Callable<Integer> {
     private List<String> conversationHistory;
     private LLMClient llmClient;
     private TodoListManager todoListManager;
+    private ToolExecutor toolExecutor;
 
     // System command execution support
     private File currentWorkingDirectory;
@@ -119,6 +124,9 @@ public class InteractiveCommand implements Callable<Integer> {
 
             // Initialize TodoListManager
             todoListManager = new TodoListManager(llmClient, printer);
+
+            // Initialize ToolExecutor
+            toolExecutor = new ToolExecutor(currentWorkingDirectory);
 
             // Show welcome message
             showWelcome();
@@ -200,7 +208,8 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.info("  • Plan tasks: /plan <requirement> - AI-powered task breakdown");
         printer.info("  • Execute tasks: /next - Intelligent role routing");
         printer.info("  • View tasks: /tasks or Ctrl+T - See all tasks");
-        printer.info("  • System commands: $ <command> - Execute shell commands (NEW!)");
+        printer.info("  • Build tools: /compile, /test, /spotbugs - Development tools (NEW!)");
+        printer.info("  • System commands: $ <command> - Execute shell commands");
         printer.info("  • Use commands: /analyze, /suggest, /help, /exit");
         printer.info("  • Chat naturally: Ask questions about security, code, etc.");
         printer.blank();
@@ -314,6 +323,18 @@ public class InteractiveCommand implements Callable<Integer> {
 
             case "config":
                 showConfig();
+                break;
+
+            case "compile":
+                handleCompileCommand(args);
+                break;
+
+            case "test":
+                handleTestCommand(args);
+                break;
+
+            case "spotbugs":
+                handleSpotBugsCommand(args);
                 break;
 
             default:
@@ -530,6 +551,171 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
+     * Handle /compile command - Maven compilation
+     */
+    private void handleCompileCommand(String args) {
+        printer.blank();
+        printer.header("Running Maven Compilation");
+        printer.info("Project: " + currentWorkingDirectory.getAbsolutePath());
+
+        boolean cleanFirst = args.contains("clean") || args.contains("-c");
+
+        try {
+            printer.spinner("Compiling...", false);
+            CompileResult result = toolExecutor.compileMaven(cleanFirst);
+            printer.spinner("Compiling", true);
+            printer.blank();
+
+            if (result.isSuccess()) {
+                printer.success("✓ Compilation successful");
+                printer.keyValue("  Duration", result.getDurationMs() + "ms");
+                printer.keyValue("  Exit Code", String.valueOf(result.getExitCode()));
+            } else {
+                printer.error("✗ Compilation failed");
+                printer.keyValue("  Duration", result.getDurationMs() + "ms");
+                printer.keyValue("  Exit Code", String.valueOf(result.getExitCode()));
+                printer.keyValue("  Errors Found", String.valueOf(result.getErrorCount()));
+
+                if (result.hasErrors()) {
+                    printer.blank();
+                    printer.subheader("Compilation Errors:");
+                    for (int i = 0; i < Math.min(10, result.getErrors().size()); i++) {
+                        CompileResult.CompileError error = result.getErrors().get(i);
+                        printer.error("  " + error.toString());
+                    }
+                    if (result.getErrors().size() > 10) {
+                        printer.info("  ... and " + (result.getErrors().size() - 10) + " more errors");
+                    }
+                }
+            }
+
+            if (parent.isVerbose()) {
+                printer.blank();
+                printer.subheader("Full Output:");
+                System.out.println(result.getOutput());
+            }
+
+        } catch (Exception e) {
+            printer.error("Compilation failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+        printer.blank();
+    }
+
+    /**
+     * Handle /test command - JUnit tests
+     */
+    private void handleTestCommand(String args) {
+        printer.blank();
+        printer.header("Running JUnit Tests");
+        printer.info("Project: " + currentWorkingDirectory.getAbsolutePath());
+
+        String testPattern = args.trim().isEmpty() ? null : args.trim();
+        if (testPattern != null) {
+            printer.info("Test Pattern: " + testPattern);
+        }
+
+        try {
+            printer.spinner("Running tests...", false);
+            TestResult result = toolExecutor.runTests(testPattern);
+            printer.spinner("Running tests", true);
+            printer.blank();
+
+            if (result.isSuccess()) {
+                printer.success("✓ All tests passed");
+            } else {
+                printer.error("✗ Some tests failed");
+            }
+
+            printer.keyValue("  Tests Run", String.valueOf(result.getTestsRun()));
+            printer.keyValue("  Passed", String.valueOf(result.getTestsPassed()));
+            printer.keyValue("  Failed", String.valueOf(result.getTestsFailed()));
+            printer.keyValue("  Skipped", String.valueOf(result.getTestsSkipped()));
+            printer.keyValue("  Duration", result.getDurationMs() + "ms");
+
+            if (result.hasFailures()) {
+                printer.blank();
+                printer.subheader("Test Failures:");
+                for (int i = 0; i < Math.min(5, result.getFailures().size()); i++) {
+                    TestResult.TestFailure failure = result.getFailures().get(i);
+                    printer.error("  " + failure.toString());
+                }
+                if (result.getFailures().size() > 5) {
+                    printer.info("  ... and " + (result.getFailures().size() - 5) + " more failures");
+                }
+            }
+
+            if (parent.isVerbose()) {
+                printer.blank();
+                printer.subheader("Full Output:");
+                System.out.println(result.getOutput());
+            }
+
+        } catch (Exception e) {
+            printer.error("Test execution failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+        printer.blank();
+    }
+
+    /**
+     * Handle /spotbugs command - SpotBugs static analysis
+     */
+    private void handleSpotBugsCommand(String args) {
+        printer.blank();
+        printer.header("Running SpotBugs Static Analysis");
+        printer.info("Project: " + currentWorkingDirectory.getAbsolutePath());
+
+        try {
+            printer.spinner("Analyzing...", false);
+            AnalysisResult result = toolExecutor.analyzeWithSpotBugs(null);
+            printer.spinner("Analyzing", true);
+            printer.blank();
+
+            if (result.isSuccess()) {
+                printer.success("✓ No bugs found");
+            } else {
+                printer.warning("⚠ Bugs detected");
+            }
+
+            printer.keyValue("  Total Bugs", String.valueOf(result.getBugCount()));
+            printer.keyValue("  High Priority", String.valueOf(result.getHighPriorityCount()));
+            printer.keyValue("  Medium Priority", String.valueOf(result.getMediumPriorityCount()));
+            printer.keyValue("  Low Priority", String.valueOf(result.getLowPriorityCount()));
+            printer.keyValue("  Duration", result.getDurationMs() + "ms");
+
+            if (result.hasBugs()) {
+                printer.blank();
+                printer.subheader("Bugs Found:");
+                for (int i = 0; i < Math.min(10, result.getBugs().size()); i++) {
+                    AnalysisResult.Bug bug = result.getBugs().get(i);
+                    printer.warning("  " + bug.toString());
+                }
+                if (result.getBugs().size() > 10) {
+                    printer.info("  ... and " + (result.getBugs().size() - 10) + " more bugs");
+                }
+            }
+
+            if (parent.isVerbose()) {
+                printer.blank();
+                printer.subheader("Full Output:");
+                System.out.println(result.getOutput());
+            }
+
+        } catch (Exception e) {
+            printer.error("Static analysis failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+        printer.blank();
+    }
+
+    /**
      * Show available commands
      */
     private void showHelp() {
@@ -548,6 +734,13 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.keyValue("  /analyze <path>", "Analyze code for security issues");
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
+        printer.blank();
+
+        printer.subheader("Build & Test Tools (NEW!)");
+        printer.keyValue("  /compile [clean]", "Run Maven compilation");
+        printer.keyValue("  /test [pattern]", "Run JUnit tests");
+        printer.keyValue("  /spotbugs", "Run SpotBugs static analysis");
+        printer.info("  Examples: /compile, /compile clean, /test UserTest");
         printer.blank();
 
         printer.subheader("System Commands (NEW!)");

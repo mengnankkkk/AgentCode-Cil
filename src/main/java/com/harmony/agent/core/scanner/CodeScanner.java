@@ -1,5 +1,6 @@
 package com.harmony.agent.core.scanner;
 
+import com.harmony.agent.core.parser.CompileCommandsParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,17 +34,35 @@ public class CodeScanner {
     private final Path basePath;
     private final Set<String> ignorePatterns;
     private final boolean useGitignore;
+    private final CompileCommandsParser compileCommandsParser;
 
     public CodeScanner(String basePath) {
-        this(basePath, true);
+        this(basePath, true, null);
     }
 
     public CodeScanner(String basePath, boolean useGitignore) {
+        this(basePath, useGitignore, null);
+    }
+
+    public CodeScanner(String basePath, boolean useGitignore, String compileCommandsPath) {
         this.basePath = Paths.get(basePath).toAbsolutePath().normalize();
         this.ignorePatterns = new HashSet<>(DEFAULT_IGNORE_PATTERNS);
         this.useGitignore = useGitignore;
 
-        if (useGitignore) {
+        // Initialize compile_commands parser if provided
+        if (compileCommandsPath != null) {
+            try {
+                this.compileCommandsParser = new CompileCommandsParser(Paths.get(compileCommandsPath));
+                logger.info("Using compile_commands.json for file discovery");
+            } catch (IOException e) {
+                logger.error("Failed to load compile_commands.json: {}", e.getMessage());
+                throw new RuntimeException("Failed to load compile_commands.json", e);
+            }
+        } else {
+            this.compileCommandsParser = null;
+        }
+
+        if (useGitignore && compileCommandsParser == null) {
             loadGitignorePatterns();
         }
 
@@ -54,7 +73,17 @@ public class CodeScanner {
      * Scan for all C/C++ source files
      */
     public List<Path> scanAll() throws IOException {
-        logger.info("Starting full scan of: {}", basePath);
+        // Prioritize compile_commands.json if available
+        if (compileCommandsParser != null) {
+            logger.info("Using compile_commands.json for file discovery");
+            Set<Path> sourceFiles = compileCommandsParser.getSourceFiles();
+            List<Path> result = new ArrayList<>(sourceFiles);
+            logger.info("Found {} C/C++ files from compile_commands.json", result.size());
+            return result;
+        }
+
+        // Fall back to filesystem scan
+        logger.info("Starting filesystem scan of: {}", basePath);
 
         if (!Files.exists(basePath)) {
             throw new IOException("Path does not exist: " + basePath);

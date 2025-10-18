@@ -35,7 +35,7 @@ public class AnalysisEngine {
     public AnalysisEngine(String sourcePath, AnalysisConfig config) {
         this.sourcePath = sourcePath;
         this.config = config;
-        this.scanner = new CodeScanner(sourcePath, true);
+        this.scanner = new CodeScanner(sourcePath, true, config.getCompileCommandsPath());
         this.analyzers = initializeAnalyzers();
 
         // Create thread pool for parallel analysis
@@ -274,24 +274,36 @@ public class AnalysisEngine {
         private final boolean parallel;
         private final int maxThreads;
         private final int timeout;
+        private final String compileCommandsPath;
 
         public AnalysisConfig(String level, boolean incremental, boolean parallel,
                              int maxThreads, int timeout) {
+            this(level, incremental, parallel, maxThreads, timeout, null);
+        }
+
+        public AnalysisConfig(String level, boolean incremental, boolean parallel,
+                             int maxThreads, int timeout, String compileCommandsPath) {
             this.level = level;
             this.incremental = incremental;
             this.parallel = parallel;
             this.maxThreads = maxThreads;
             this.timeout = timeout;
+            this.compileCommandsPath = compileCommandsPath;
         }
 
         public static AnalysisConfig fromConfigManager() {
+            return fromConfigManager(null);
+        }
+
+        public static AnalysisConfig fromConfigManager(String compileCommandsPath) {
             ConfigManager configManager = ConfigManager.getInstance();
             return new AnalysisConfig(
                 configManager.getConfig().getAnalysis().getLevel(),
                 configManager.getConfig().getAnalysis().isIncremental(),
                 configManager.getConfig().getAnalysis().isParallel(),
                 configManager.getConfig().getAnalysis().getMaxThreads(),
-                configManager.getConfig().getAnalysis().getTimeout()
+                configManager.getConfig().getAnalysis().getTimeout(),
+                compileCommandsPath
             );
         }
 
@@ -313,6 +325,10 @@ public class AnalysisEngine {
 
         public int getTimeout() {
             return timeout;
+        }
+
+        public String getCompileCommandsPath() {
+            return compileCommandsPath;
         }
     }
 }

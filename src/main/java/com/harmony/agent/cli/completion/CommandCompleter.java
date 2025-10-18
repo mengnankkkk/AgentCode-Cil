@@ -33,6 +33,10 @@ public class CommandCompleter implements Completer {
         new CommandInfo("/analyze", "Analyze code for security issues", true),
         new CommandInfo("/suggest", "Get AI suggestions for fixes", true),
         new CommandInfo("/refactor", "Get refactoring recommendations", true),
+        // Build & Test Tools
+        new CommandInfo("/compile", "Run Maven compilation", false),
+        new CommandInfo("/test", "Run JUnit tests", false),
+        new CommandInfo("/spotbugs", "Run SpotBugs static analysis", false),
         // General
         new CommandInfo("/config", "Show current configuration", false),
         new CommandInfo("/history", "Show conversation history", false),
