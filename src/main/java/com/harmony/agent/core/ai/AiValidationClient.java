@@ -41,9 +41,10 @@ public class AiValidationClient {
         }
 
         String claudeKey = System.getenv("CLAUDE_API_KEY");
+        String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
 
         // Create provider factory
-        ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey);
+        ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
 
         // Use OpenAI for validation (fast and cost-effective)
         // Can be configured to use Claude for more complex analysis

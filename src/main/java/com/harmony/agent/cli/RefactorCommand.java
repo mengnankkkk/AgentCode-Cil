@@ -1,5 +1,6 @@
 package com.harmony.agent.cli;
 
+import com.harmony.agent.config.AppConfig;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.core.ai.CodeSlicer;
 import com.harmony.agent.core.ai.RustMigrationAdvisor;
@@ -159,6 +160,21 @@ public class RefactorCommand implements Callable<Integer> {
             // 获取配置管理器
             ConfigManager configManager = parent.getConfigManager();
 
+            // 获取命令配置（优先）或使用默认的 ai.model
+            String providerName = configManager.getConfig().getAi().getProvider();
+            String model = configManager.getConfig().getAi().getModel();
+
+            // 检查是否有命令级别的配置
+            AppConfig.CommandConfig commandConfig = configManager.getConfig().getAi().getCommands().get("refactor");
+            if (commandConfig != null) {
+                if (commandConfig.getProvider() != null) {
+                    providerName = commandConfig.getProvider();
+                }
+                if (commandConfig.getModel() != null) {
+                    model = commandConfig.getModel();
+                }
+            }
+
             // 创建LLMProvider
             String openaiKey = System.getenv("OPENAI_API_KEY");
             if (openaiKey == null || openaiKey.isEmpty()) {
@@ -166,19 +182,20 @@ public class RefactorCommand implements Callable<Integer> {
             }
 
             String claudeKey = System.getenv("CLAUDE_API_KEY");
-            ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey);
+            String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
+            ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
 
-            String providerName = configManager.getConfig().getAi().getProvider();
             LLMProvider provider;
             try {
                 provider = factory.getProvider(providerName);
             } catch (IllegalArgumentException e) {
                 printer.error("LLM provider not configured: " + providerName);
                 printer.blank();
-                printer.info("Available providers: openai, claude");
+                printer.info("Available providers: openai, claude, siliconflow");
                 printer.info("Please configure API keys:");
                 printer.info("  - Set OPENAI_API_KEY environment variable, or");
                 printer.info("  - Set CLAUDE_API_KEY environment variable, or");
+                printer.info("  - Set SILICONFLOW_API_KEY environment variable, or");
                 printer.info("  - Configure in config.yaml");
                 return 1;
             }
@@ -195,7 +212,6 @@ public class RefactorCommand implements Callable<Integer> {
 
             // 创建RustMigrationAdvisor
             CodeSlicer codeSlicer = new CodeSlicer();
-            String model = configManager.getConfig().getAi().getModel();
             RustMigrationAdvisor advisor = new RustMigrationAdvisor(provider, codeSlicer, model);
 
             // 显示分析开始

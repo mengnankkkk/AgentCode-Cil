@@ -1,5 +1,6 @@
 package com.harmony.agent.llm;
 
+import com.harmony.agent.config.AppConfig;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.llm.model.LLMResponse;
 import com.harmony.agent.llm.orchestrator.ConversationContext;
@@ -57,20 +58,27 @@ public class LLMClient {
     private ProviderFactory createProviderFactory() {
         String openaiKey = System.getenv("OPENAI_API_KEY");
         String claudeKey = System.getenv("CLAUDE_API_KEY");
+        String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
 
         // Fallback to config if env vars not set
         if (openaiKey == null || openaiKey.isEmpty()) {
             openaiKey = configManager.getConfig().getAi().getApiKey();
         }
 
-        return ProviderFactory.createDefault(openaiKey, claudeKey);
+        return ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
     }
 
     /**
      * Get provider name for a role from config
      */
     private String getProviderForRole(String roleName) {
-        // Default mappings (can be overridden by config in Phase 3)
+        // Check if role is configured in config file
+        AppConfig.RoleConfig roleConfig = configManager.getConfig().getAi().getRoles().get(roleName);
+        if (roleConfig != null && roleConfig.getProvider() != null) {
+            return roleConfig.getProvider();
+        }
+
+        // Default mappings (fallback)
         return switch (roleName) {
             case "analyzer" -> "openai";
             case "planner", "coder", "reviewer" -> "claude";
@@ -82,7 +90,24 @@ public class LLMClient {
      * Get model name for a role from config
      */
     private String getModelForRole(String roleName) {
-        // Default mappings (can be overridden by config in Phase 3)
+        // Check if role is configured in config file
+        AppConfig.RoleConfig roleConfig = configManager.getConfig().getAi().getRoles().get(roleName);
+        if (roleConfig != null && roleConfig.getModel() != null) {
+            String model = roleConfig.getModel();
+
+            // If model is a reference like "fast", "standard", "premium", resolve it
+            if (model.matches("fast|standard|premium")) {
+                String provider = getProviderForRole(roleName);
+                AppConfig.ProviderConfig providerConfig = configManager.getConfig().getAi().getProviders().get(provider);
+                if (providerConfig != null && providerConfig.getModels().containsKey(model)) {
+                    return providerConfig.getModels().get(model);
+                }
+            }
+
+            return model;
+        }
+
+        // Default mappings (fallback)
         return switch (roleName) {
             case "analyzer" -> "gpt-3.5-turbo";
             case "planner" -> "claude-3-sonnet-20240229";
@@ -129,10 +154,12 @@ public class LLMClient {
     public boolean isAvailable() {
         String openaiKey = System.getenv("OPENAI_API_KEY");
         String claudeKey = System.getenv("CLAUDE_API_KEY");
+        String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
         String configKey = configManager.getConfig().getAi().getApiKey();
 
         return (openaiKey != null && !openaiKey.isEmpty()) ||
                (claudeKey != null && !claudeKey.isEmpty()) ||
+               (siliconflowKey != null && !siliconflowKey.isEmpty()) ||
                (configKey != null && !configKey.isEmpty());
     }
 

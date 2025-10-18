@@ -14,6 +14,9 @@ public class AppConfig {
     private OutputConfig output = new OutputConfig();
     private CacheConfig cache = new CacheConfig();
 
+    /**
+     * AI configuration
+     */
     public static class AiConfig {
         private String provider = "openai";
         private String apiKey;
@@ -21,6 +24,15 @@ public class AppConfig {
         private int maxTokens = 4096;
         private double temperature = 0.3;
         private String baseUrl = "https://api.openai.com/v1";
+
+        // Multiple providers configuration
+        private Map<String, ProviderConfig> providers = new HashMap<>();
+
+        // Role-based model selection
+        private Map<String, RoleConfig> roles = new HashMap<>();
+
+        // Command-based model selection
+        private Map<String, CommandConfig> commands = new HashMap<>();
 
         // Getters and setters
         public String getProvider() { return provider; }
@@ -40,8 +52,82 @@ public class AppConfig {
 
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+
+        public Map<String, ProviderConfig> getProviders() { return providers; }
+        public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
+
+        public Map<String, RoleConfig> getRoles() { return roles; }
+        public void setRoles(Map<String, RoleConfig> roles) { this.roles = roles; }
+
+        public Map<String, CommandConfig> getCommands() { return commands; }
+        public void setCommands(Map<String, CommandConfig> commands) { this.commands = commands; }
     }
 
+    /**
+     * Provider configuration
+     */
+    public static class ProviderConfig {
+        private String apiKey;
+        private String baseUrl;
+        private Map<String, String> models = new HashMap<>();
+
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+
+        public String getBaseUrl() { return baseUrl; }
+        public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+
+        public Map<String, String> getModels() { return models; }
+        public void setModels(Map<String, String> models) { this.models = models; }
+    }
+
+    /**
+     * Role configuration
+     */
+    public static class RoleConfig {
+        private String provider;
+        private String model;
+        private double temperature = 0.5;
+        private int maxTokens = 2000;
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+
+        public double getTemperature() { return temperature; }
+        public void setTemperature(double temperature) { this.temperature = temperature; }
+
+        public int getMaxTokens() { return maxTokens; }
+        public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
+    }
+
+    /**
+     * Command configuration (for CLI commands)
+     */
+    public static class CommandConfig {
+        private String provider;
+        private String model;
+        private double temperature = 0.3;
+        private int maxTokens = 4096;
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+
+        public double getTemperature() { return temperature; }
+        public void setTemperature(double temperature) { this.temperature = temperature; }
+
+        public int getMaxTokens() { return maxTokens; }
+        public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
+    }
+
+    /**
+     * Analysis configuration
+     */
     public static class AnalysisConfig {
         private String level = "standard";
         private boolean parallel = true;
@@ -66,6 +152,9 @@ public class AppConfig {
         public void setTimeout(int timeout) { this.timeout = timeout; }
     }
 
+    /**
+     * Tools configuration
+     */
     public static class ToolsConfig {
         private String clangPath = "clang";
         private String semgrepPath = "semgrep";
@@ -82,6 +171,9 @@ public class AppConfig {
         public void setRustPath(String rustPath) { this.rustPath = rustPath; }
     }
 
+    /**
+     * Output configuration
+     */
     public static class OutputConfig {
         private String format = "html";
         private boolean verbose = true;
@@ -98,6 +190,9 @@ public class AppConfig {
         public void setColor(boolean color) { this.color = color; }
     }
 
+    /**
+     * Cache configuration
+     */
     public static class CacheConfig {
         private boolean enabled = true;
         private int ttl = 3600;

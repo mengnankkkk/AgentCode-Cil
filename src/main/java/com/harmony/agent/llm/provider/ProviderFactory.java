@@ -39,6 +39,13 @@ public class ProviderFactory {
      * Create default factory with common providers
      */
     public static ProviderFactory createDefault(String openaiKey, String claudeKey) {
+        return createDefault(openaiKey, claudeKey, null);
+    }
+
+    /**
+     * Create default factory with common providers including SiliconFlow
+     */
+    public static ProviderFactory createDefault(String openaiKey, String claudeKey, String siliconflowKey) {
         ProviderFactory factory = new ProviderFactory();
 
         if (openaiKey != null && !openaiKey.isEmpty()) {
@@ -47,6 +54,10 @@ public class ProviderFactory {
 
         if (claudeKey != null && !claudeKey.isEmpty()) {
             factory.registerProvider("claude", new ClaudeProvider(claudeKey));
+        }
+
+        if (siliconflowKey != null && !siliconflowKey.isEmpty()) {
+            factory.registerProvider("siliconflow", new SiliconFlowProvider(siliconflowKey));
         }
 
         return factory;

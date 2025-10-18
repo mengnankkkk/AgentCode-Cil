@@ -97,6 +97,78 @@ public class ConfigManager {
                         if (aiMap.containsKey("max_tokens")) config.getAi().setMaxTokens(((Number) aiMap.get("max_tokens")).intValue());
                         if (aiMap.containsKey("temperature")) config.getAi().setTemperature(((Number) aiMap.get("temperature")).doubleValue());
                         if (aiMap.containsKey("base_url")) config.getAi().setBaseUrl((String) aiMap.get("base_url"));
+
+                        // Load providers configuration
+                        if (aiMap.containsKey("providers")) {
+                            Map<String, Map<String, Object>> providersMap = (Map<String, Map<String, Object>>) aiMap.get("providers");
+                            for (Map.Entry<String, Map<String, Object>> entry : providersMap.entrySet()) {
+                                String providerName = entry.getKey();
+                                Map<String, Object> providerData = entry.getValue();
+
+                                AppConfig.ProviderConfig providerConfig = new AppConfig.ProviderConfig();
+                                if (providerData.containsKey("api_key")) {
+                                    providerConfig.setApiKey((String) providerData.get("api_key"));
+                                }
+                                if (providerData.containsKey("base_url")) {
+                                    providerConfig.setBaseUrl((String) providerData.get("base_url"));
+                                }
+                                if (providerData.containsKey("models")) {
+                                    providerConfig.setModels((Map<String, String>) providerData.get("models"));
+                                }
+
+                                config.getAi().getProviders().put(providerName, providerConfig);
+                            }
+                        }
+
+                        // Load roles configuration
+                        if (aiMap.containsKey("roles")) {
+                            Map<String, Map<String, Object>> rolesMap = (Map<String, Map<String, Object>>) aiMap.get("roles");
+                            for (Map.Entry<String, Map<String, Object>> entry : rolesMap.entrySet()) {
+                                String roleName = entry.getKey();
+                                Map<String, Object> roleData = entry.getValue();
+
+                                AppConfig.RoleConfig roleConfig = new AppConfig.RoleConfig();
+                                if (roleData.containsKey("provider")) {
+                                    roleConfig.setProvider((String) roleData.get("provider"));
+                                }
+                                if (roleData.containsKey("model")) {
+                                    roleConfig.setModel((String) roleData.get("model"));
+                                }
+                                if (roleData.containsKey("temperature")) {
+                                    roleConfig.setTemperature(((Number) roleData.get("temperature")).doubleValue());
+                                }
+                                if (roleData.containsKey("max_tokens")) {
+                                    roleConfig.setMaxTokens(((Number) roleData.get("max_tokens")).intValue());
+                                }
+
+                                config.getAi().getRoles().put(roleName, roleConfig);
+                            }
+                        }
+
+                        // Load commands configuration
+                        if (aiMap.containsKey("commands")) {
+                            Map<String, Map<String, Object>> commandsMap = (Map<String, Map<String, Object>>) aiMap.get("commands");
+                            for (Map.Entry<String, Map<String, Object>> entry : commandsMap.entrySet()) {
+                                String commandName = entry.getKey();
+                                Map<String, Object> commandData = entry.getValue();
+
+                                AppConfig.CommandConfig commandConfig = new AppConfig.CommandConfig();
+                                if (commandData.containsKey("provider")) {
+                                    commandConfig.setProvider((String) commandData.get("provider"));
+                                }
+                                if (commandData.containsKey("model")) {
+                                    commandConfig.setModel((String) commandData.get("model"));
+                                }
+                                if (commandData.containsKey("temperature")) {
+                                    commandConfig.setTemperature(((Number) commandData.get("temperature")).doubleValue());
+                                }
+                                if (commandData.containsKey("max_tokens")) {
+                                    commandConfig.setMaxTokens(((Number) commandData.get("max_tokens")).intValue());
+                                }
+
+                                config.getAi().getCommands().put(commandName, commandConfig);
+                            }
+                        }
                     }
 
                     // Load Analysis config
