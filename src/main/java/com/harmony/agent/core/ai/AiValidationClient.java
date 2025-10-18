@@ -37,11 +37,24 @@ public class AiValidationClient {
         // Get API keys from environment or config
         String openaiKey = System.getenv("OPENAI_API_KEY");
         if (openaiKey == null || openaiKey.isEmpty()) {
-            openaiKey = configManager.getConfig().getAi().getApiKey();
+            if (configManager.getConfig().getAi().getProviders().containsKey("openai")) {
+                openaiKey = configManager.getConfig().getAi().getProviders().get("openai").getApiKey();
+            }
         }
 
         String claudeKey = System.getenv("CLAUDE_API_KEY");
+        if (claudeKey == null || claudeKey.isEmpty()) {
+            if (configManager.getConfig().getAi().getProviders().containsKey("claude")) {
+                claudeKey = configManager.getConfig().getAi().getProviders().get("claude").getApiKey();
+            }
+        }
+
         String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
+        if (siliconflowKey == null || siliconflowKey.isEmpty()) {
+            if (configManager.getConfig().getAi().getProviders().containsKey("siliconflow")) {
+                siliconflowKey = configManager.getConfig().getAi().getProviders().get("siliconflow").getApiKey();
+            }
+        }
 
         // Create provider factory
         ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);

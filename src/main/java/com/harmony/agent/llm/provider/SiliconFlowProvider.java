@@ -1,7 +1,15 @@
 package com.harmony.agent.llm.provider;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.harmony.agent.llm.model.LLMRequest;
 import com.harmony.agent.llm.model.LLMResponse;
+import com.harmony.agent.llm.model.Message;
+import okhttp3.*;
+
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 /**
  * SiliconFlow (硅基流动) provider implementation
@@ -11,6 +19,10 @@ import com.harmony.agent.llm.model.LLMResponse;
 public class SiliconFlowProvider extends BaseLLMProvider {
 
     private static final String DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1";
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+
+    private final OkHttpClient httpClient;
+    private final Gson gson;
 
     private static final String[] AVAILABLE_MODELS = {
         // Qwen (通义千问) 系列
@@ -46,6 +58,12 @@ public class SiliconFlowProvider extends BaseLLMProvider {
 
     public SiliconFlowProvider(String apiKey, String baseUrl) {
         super(apiKey, baseUrl);
+        this.httpClient = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build();
+        this.gson = new Gson();
     }
 
     @Override
@@ -60,18 +78,95 @@ public class SiliconFlowProvider extends BaseLLMProvider {
 
     @Override
     protected LLMResponse sendHttpRequest(LLMRequest request) {
-        // TODO: Phase 3 - Implement actual HTTP request using HttpClient
-        // SiliconFlow API is compatible with OpenAI format, so implementation will be similar
-        logger.warn("SiliconFlow HTTP request not yet implemented (Phase 3)");
+        try {
+            // Build JSON request body (OpenAI-compatible format)
+            JsonObject requestBody = new JsonObject();
+            requestBody.addProperty("model", request.getModel());
+            requestBody.addProperty("temperature", request.getTemperature());
+            requestBody.addProperty("max_tokens", request.getMaxTokens());
+            requestBody.addProperty("stream", false);
 
-        // Placeholder response for Phase 2
-        return LLMResponse.builder()
-            .content("SiliconFlow response placeholder. Real API integration coming in Phase 3.")
-            .model(request.getModel())
-            .promptTokens(100)
-            .completionTokens(50)
-            .totalTokens(150)
-            .success(true)
-            .build();
+            // Add messages
+            JsonArray messagesArray = new JsonArray();
+            for (Message msg : request.getMessages()) {
+                JsonObject messageObj = new JsonObject();
+                messageObj.addProperty("role", msg.getRole().name().toLowerCase());
+                messageObj.addProperty("content", msg.getContent());
+                messagesArray.add(messageObj);
+            }
+            requestBody.add("messages", messagesArray);
+
+            // Build HTTP request
+            String url = baseUrl + "/chat/completions";
+            RequestBody body = RequestBody.create(gson.toJson(requestBody), JSON);
+
+            Request httpRequest = new Request.Builder()
+                .url(url)
+                .addHeader("Authorization", "Bearer " + apiKey)
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build();
+
+            logger.debug("Sending request to SiliconFlow API: {}", url);
+
+            // Execute request
+            try (Response response = httpClient.newCall(httpRequest).execute()) {
+                if (!response.isSuccessful()) {
+                    String errorBody = response.body() != null ? response.body().string() : "No error details";
+                    logger.error("SiliconFlow API error: {} - {}", response.code(), errorBody);
+                    return LLMResponse.builder()
+                        .errorMessage("SiliconFlow API error: " + response.code() + " - " + errorBody)
+                        .build();
+                }
+
+                // Parse response
+                String responseBody = response.body() != null ? response.body().string() : "{}";
+                JsonObject jsonResponse = gson.fromJson(responseBody, JsonObject.class);
+
+                // Extract content from response
+                String content = "";
+                int promptTokens = 0;
+                int completionTokens = 0;
+                int totalTokens = 0;
+
+                if (jsonResponse.has("choices") && jsonResponse.getAsJsonArray("choices").size() > 0) {
+                    JsonObject firstChoice = jsonResponse.getAsJsonArray("choices").get(0).getAsJsonObject();
+                    if (firstChoice.has("message")) {
+                        JsonObject message = firstChoice.getAsJsonObject("message");
+                        content = message.has("content") ? message.get("content").getAsString() : "";
+                    }
+                }
+
+                if (jsonResponse.has("usage")) {
+                    JsonObject usage = jsonResponse.getAsJsonObject("usage");
+                    promptTokens = usage.has("prompt_tokens") ? usage.get("prompt_tokens").getAsInt() : 0;
+                    completionTokens = usage.has("completion_tokens") ? usage.get("completion_tokens").getAsInt() : 0;
+                    totalTokens = usage.has("total_tokens") ? usage.get("total_tokens").getAsInt() : 0;
+                }
+
+                logger.info("SiliconFlow API call successful. Tokens: prompt={}, completion={}, total={}",
+                    promptTokens, completionTokens, totalTokens);
+
+                return LLMResponse.builder()
+                    .content(content)
+                    .model(request.getModel())
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
+                    .totalTokens(totalTokens)
+                    .success(true)
+                    .build();
+
+            }
+        } catch (IOException e) {
+            logger.error("Failed to send request to SiliconFlow API", e);
+            return LLMResponse.builder()
+                .errorMessage("Network error: " + e.getMessage())
+                .build();
+        } catch (Exception e) {
+            logger.error("Unexpected error calling SiliconFlow API", e);
+            return LLMResponse.builder()
+                .errorMessage("Unexpected error: " + e.getMessage())
+                .build();
+        }
     }
 }

@@ -10,7 +10,11 @@
       "mcp__thinking__sequentialthinking",
       "Bash(powershell -Command:*)",
       "Bash(git clone:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(dir:*)",
+      "Read(//c/Users/ikeife/.harmony-agent/**)",
+      "Bash(del targetclassescomharmonyagentllmLLMClient.class)",
+      "Bash(timeout 60 java:*)"
     ],
     "deny": [],
     "ask": []

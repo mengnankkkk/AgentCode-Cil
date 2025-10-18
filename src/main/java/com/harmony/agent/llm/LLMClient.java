@@ -62,7 +62,24 @@ public class LLMClient {
 
         // Fallback to config if env vars not set
         if (openaiKey == null || openaiKey.isEmpty()) {
-            openaiKey = configManager.getConfig().getAi().getApiKey();
+            AppConfig.ProviderConfig openaiConfig = configManager.getConfig().getAi().getProviders().get("openai");
+            if (openaiConfig != null) {
+                openaiKey = openaiConfig.getApiKey();
+            }
+        }
+
+        if (claudeKey == null || claudeKey.isEmpty()) {
+            AppConfig.ProviderConfig claudeConfig = configManager.getConfig().getAi().getProviders().get("claude");
+            if (claudeConfig != null) {
+                claudeKey = claudeConfig.getApiKey();
+            }
+        }
+
+        if (siliconflowKey == null || siliconflowKey.isEmpty()) {
+            AppConfig.ProviderConfig siliconflowConfig = configManager.getConfig().getAi().getProviders().get("siliconflow");
+            if (siliconflowConfig != null) {
+                siliconflowKey = siliconflowConfig.getApiKey();
+            }
         }
 
         return ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
