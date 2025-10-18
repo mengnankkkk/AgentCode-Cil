@@ -36,6 +36,9 @@ public enum IssueCategory {
     CODE_SMELL("Code Smell", "Quality"),
     DEPRECATED_API("Deprecated API", "Quality"),
     INTEGER_OVERFLOW("Integer Overflow", "Quality"),
+    CODE_QUALITY("Code Quality Issue", "Quality"),
+    ERROR_HANDLING("Error Handling Issue", "Quality"),
+    UNSAFE_CODE("Unsafe Code Usage", "Quality"),
 
     // Other
     UNDEFINED_BEHAVIOR("Undefined Behavior", "Other"),

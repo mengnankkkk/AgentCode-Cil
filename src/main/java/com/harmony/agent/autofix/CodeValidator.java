@@ -1,6 +1,7 @@
 package com.harmony.agent.autofix;
 
 import com.harmony.agent.core.analyzer.AnalyzerException;
+import com.harmony.agent.core.analyzer.RustAnalyzer;
 import com.harmony.agent.core.analyzer.SemgrepAnalyzer;
 import com.harmony.agent.core.compile.CompileCommandsParser;
 import com.harmony.agent.core.model.IssueCategory;
@@ -45,6 +46,7 @@ public class CodeValidator {
     private final ProjectType projectType;
     private final CompileCommandsParser compileCommandsParser;
     private final SemgrepAnalyzer semgrepAnalyzer;  // For C/C++ re-analysis
+    private final RustAnalyzer rustAnalyzer;  // For Rust re-analysis
 
     public CodeValidator(ToolExecutor toolExecutor, File workingDirectory) {
         this.toolExecutor = toolExecutor;
@@ -52,6 +54,7 @@ public class CodeValidator {
         this.projectType = ProjectType.detectFromDirectory(workingDirectory);
         this.compileCommandsParser = new CompileCommandsParser(workingDirectory);
         this.semgrepAnalyzer = new SemgrepAnalyzer();  // Initialize Semgrep analyzer
+        this.rustAnalyzer = new RustAnalyzer();  // Initialize Rust analyzer
 
         logger.info("Detected project type: {}", projectType.getDisplayName());
 
@@ -66,6 +69,15 @@ public class CodeValidator {
                 logger.warn("Semgrep not available - C/C++ re-analysis will be skipped");
             } else {
                 logger.info("Semgrep available for re-analysis: {}", semgrepAnalyzer.getVersion());
+            }
+        }
+
+        if (projectType == ProjectType.RUST) {
+            // Check if Cargo is available
+            if (!rustAnalyzer.isAvailable()) {
+                logger.warn("Cargo not available - Rust validation will be skipped");
+            } else {
+                logger.info("Cargo available for Rust validation: {}", rustAnalyzer.getVersion());
             }
         }
     }
@@ -95,9 +107,10 @@ public class CodeValidator {
         return switch (projectType) {
             case C_CPP -> validateCppCode(filePath, newCode, originalIssue);
             case JAVA -> validateJavaCode(filePath, newCode);
+            case RUST -> validateRustCode(filePath, newCode, originalIssue);
             default -> ValidationResult.fail(
                 "Unsupported project type: " + projectType.getDisplayName(),
-                List.of("Only C/C++ and Java projects are supported"),
+                List.of("Only C/C++, Java, and Rust projects are supported"),
                 null
             );
         };
@@ -295,6 +308,210 @@ public class CodeValidator {
                 }
             }
         }
+    }
+
+    /**
+     * Validate Rust code using Cargo
+     */
+    private ValidationResult validateRustCode(Path filePath, String newCode, SecurityIssue originalIssue) {
+        Path backupFile = null;
+
+        try {
+            // Step 1: Backup original file
+            backupFile = createBackup(filePath);
+            logger.info("Created backup: {}", backupFile);
+
+            // Step 2: Write new code to original file
+            Files.writeString(filePath, newCode);
+            logger.info("Wrote fixed code to: {}", filePath);
+
+            // Step 3: Find Cargo.toml root directory
+            Path cargoRoot = findCargoRoot(filePath);
+            if (cargoRoot == null) {
+                logger.error("Could not find Cargo.toml for file: {}", filePath);
+                return ValidationResult.fail(
+                    "Cargo.toml not found",
+                    List.of("File: " + filePath, "No Cargo project found"),
+                    null
+                );
+            }
+
+            logger.info("Found Cargo project root: {}", cargoRoot);
+
+            // Step 4: Run cargo check (compilation check)
+            List<String> command = new ArrayList<>();
+            command.add("cargo");
+            command.add("check");
+            command.add("--message-format=json");
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.directory(cargoRoot.toFile());
+            pb.redirectErrorStream(false);
+
+            Process process = pb.start();
+            StringBuilder output = new StringBuilder();
+            StringBuilder errorOutput = new StringBuilder();
+
+            // Read stdout
+            Thread stdoutThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+                } catch (IOException e) {
+                    logger.error("Error reading cargo check stdout", e);
+                }
+            });
+
+            // Read stderr
+            Thread stderrThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        errorOutput.append(line).append("\n");
+                    }
+                } catch (IOException e) {
+                    logger.error("Error reading cargo check stderr", e);
+                }
+            });
+
+            stdoutThread.start();
+            stderrThread.start();
+
+            int exitCode = process.waitFor();
+            stdoutThread.join();
+            stderrThread.join();
+
+            boolean compileSuccess = exitCode == 0;
+            logger.info("Cargo check: {}", compileSuccess ? "SUCCESS" : "FAILED");
+
+            if (!compileSuccess) {
+                // Parse cargo check errors
+                List<String> errors = parseCargoCheckOutput(output.toString());
+                return ValidationResult.fail(
+                    "Cargo check failed",
+                    errors.isEmpty() ? List.of("Exit code: " + exitCode) : errors,
+                    null
+                );
+            }
+
+            // Step 5: Re-run Rust analyzer (Clippy + Geiger) if original issue provided
+            if (originalIssue != null) {
+                logger.info("Re-running Rust analysis to verify issue is fixed...");
+
+                if (!rustAnalyzer.isAvailable()) {
+                    logger.warn("Cargo not available - skipping re-analysis");
+                    return ValidationResult.pass(
+                        "Cargo check passed, but re-analysis skipped (Cargo not available)",
+                        null
+                    );
+                }
+
+                try {
+                    // Re-analyze the file with Clippy/Geiger
+                    List<SecurityIssue> newIssues = rustAnalyzer.analyze(filePath);
+                    logger.info("Rust re-analysis found {} issues", newIssues.size());
+
+                    // Check if the original issue still exists
+                    if (stillContainsIssue(newIssues, originalIssue)) {
+                        logger.warn("Original issue still detected after fix!");
+                        return ValidationResult.fail(
+                            "Validation FAILED: Original issue still detected by Clippy/Geiger",
+                            List.of(
+                                "Issue: " + originalIssue.getTitle(),
+                                "Location: " + originalIssue.getLocation(),
+                                "The fix did not resolve the Rust issue"
+                            ),
+                            null
+                        );
+                    }
+
+                    logger.info("✓ Original issue no longer detected - fix verified!");
+
+                } catch (AnalyzerException e) {
+                    logger.warn("Rust re-analysis failed: {}", e.getMessage());
+                    return ValidationResult.pass(
+                        "Cargo check passed, but re-analysis failed: " + e.getMessage(),
+                        null
+                    );
+                }
+            }
+
+            return ValidationResult.pass("Cargo check and validation passed", null);
+
+        } catch (IOException | InterruptedException e) {
+            logger.error("Failed to validate Rust code", e);
+            return ValidationResult.fail(
+                "Validation failed: " + e.getMessage(),
+                List.of(e.getMessage()),
+                null
+            );
+
+        } finally {
+            // Restore original file from backup
+            if (backupFile != null && Files.exists(backupFile)) {
+                try {
+                    Files.copy(backupFile, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    Files.delete(backupFile);
+                    logger.info("Restored original file from backup");
+                } catch (IOException e) {
+                    logger.error("Failed to restore backup file", e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Parse cargo check JSON output to extract error messages
+     */
+    private List<String> parseCargoCheckOutput(String jsonOutput) {
+        List<String> errors = new ArrayList<>();
+
+        try {
+            String[] lines = jsonOutput.split("\n");
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                try {
+                    com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(line).getAsJsonObject();
+
+                    // Look for compiler messages
+                    if (obj.has("reason") && "compiler-message".equals(obj.get("reason").getAsString())) {
+                        com.google.gson.JsonObject message = obj.getAsJsonObject("message");
+                        if (message != null && message.has("message")) {
+                            String errorMsg = message.get("message").getAsString();
+                            String level = message.has("level") ? message.get("level").getAsString() : "error";
+                            errors.add(String.format("[%s] %s", level, errorMsg));
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.debug("Failed to parse cargo check line: {}", e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Failed to parse cargo check output", e);
+        }
+
+        return errors;
+    }
+
+    /**
+     * Find Cargo.toml root directory for a Rust file
+     */
+    private Path findCargoRoot(Path file) {
+        Path current = file.getParent();
+
+        while (current != null) {
+            Path cargoToml = current.resolve("Cargo.toml");
+            if (Files.exists(cargoToml)) {
+                return current;
+            }
+            current = current.getParent();
+        }
+
+        return null;
     }
 
     /**

@@ -23,6 +23,14 @@ public enum ProjectType {
     JAVA("Java", new String[]{".java"}),
 
     /**
+     * Rust project
+     * - Compiler: rustc
+     * - Build system: Cargo
+     * - Analyzer: Clippy, Geiger (unsafe scanner)
+     */
+    RUST("Rust", new String[]{".rs"}),
+
+    /**
      * Unknown/unsupported project type
      */
     UNKNOWN("Unknown", new String[]{});
@@ -65,6 +73,12 @@ public enum ProjectType {
             }
         }
 
+        for (String ext : RUST.extensions) {
+            if (lowerPath.endsWith(ext)) {
+                return RUST;
+            }
+        }
+
         return UNKNOWN;
     }
 
@@ -81,6 +95,11 @@ public enum ProjectType {
         if (new java.io.File(directory, "pom.xml").exists() ||
             new java.io.File(directory, "build.gradle").exists()) {
             return JAVA;
+        }
+
+        // Check for Rust project indicators
+        if (new java.io.File(directory, "Cargo.toml").exists()) {
+            return RUST;
         }
 
         // Check for C/C++ project indicators

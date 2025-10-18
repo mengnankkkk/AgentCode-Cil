@@ -159,6 +159,7 @@ public class AppConfig {
         private String clangPath = "clang";
         private String semgrepPath = "semgrep";
         private String rustPath = "rustc";
+        private String cargoPath = "cargo";  // Rust build tool
 
         // Getters and setters
         public String getClangPath() { return clangPath; }
@@ -169,6 +170,9 @@ public class AppConfig {
 
         public String getRustPath() { return rustPath; }
         public void setRustPath(String rustPath) { this.rustPath = rustPath; }
+
+        public String getCargoPath() { return cargoPath; }
+        public void setCargoPath(String cargoPath) { this.cargoPath = cargoPath; }
     }
 
     /**
@@ -246,6 +250,7 @@ public class AppConfig {
         map.put("tools.clang_path", tools.clangPath);
         map.put("tools.semgrep_path", tools.semgrepPath);
         map.put("tools.rust_path", tools.rustPath);
+        map.put("tools.cargo_path", tools.cargoPath);
 
         map.put("output.format", output.format);
         map.put("output.verbose", String.valueOf(output.verbose));
