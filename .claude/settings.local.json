@@ -14,7 +14,10 @@
       "Bash(dir:*)",
       "Read(//c/Users/ikeife/.harmony-agent/**)",
       "Bash(del targetclassescomharmonyagentllmLLMClient.class)",
-      "Bash(timeout 60 java:*)"
+      "Bash(timeout 60 java:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)"
     ],
     "deny": [],
     "ask": []

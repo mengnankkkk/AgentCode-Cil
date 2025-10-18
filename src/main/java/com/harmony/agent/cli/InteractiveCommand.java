@@ -549,35 +549,188 @@ public class InteractiveCommand implements Callable<Integer> {
      */
     private void handleAnalyzeCommand(String args) {
         if (args.isEmpty()) {
-            printer.error("Usage: /analyze <path>");
+            printer.error("Usage: /analyze <path> [options]");
+            printer.info("Options:");
+            printer.info("  -l, --level <level>           Analysis level: quick | standard | deep");
+            printer.info("  -o, --output <file>          Output HTML report file");
+            printer.info("  --compile-commands <file>    Path to compile_commands.json");
+            printer.info("  --incremental                Enable incremental analysis");
+            printer.info("  --no-ai                      Disable AI-enhanced analysis");
+            printer.blank();
+            printer.info("Example: /analyze src/main -l quick -o report.html");
             return;
         }
 
         try {
-            // Create and execute AnalyzeCommand
+            // Create AnalyzeCommand instance
             AnalyzeCommand analyzeCmd = new AnalyzeCommand();
-            // Set parent and sourcePath via reflection or directly
-            // For now, print message
-            printer.info("Running analysis on: " + args);
-            printer.info("(Full integration coming in Phase 3)");
 
+            // Parse arguments using picocli
+            String[] argArray = parseCommandLineArgs(args);
+            picocli.CommandLine cmd = new picocli.CommandLine(analyzeCmd);
+
+            // Set parent for printer and config access
+            java.lang.reflect.Field parentField = AnalyzeCommand.class.getDeclaredField("parent");
+            parentField.setAccessible(true);
+            parentField.set(analyzeCmd, parent);
+
+            // Parse and execute
+            int exitCode = cmd.execute(argArray);
+
+            // Show completion message
+            printer.blank();
+            if (exitCode == 0) {
+                printer.success("✅ Analysis completed successfully - no critical issues found!");
+            } else if (exitCode == 2) {
+                printer.warning("⚠️  Analysis completed - critical issues detected!");
+                printer.info("Review the results above or check the HTML report if generated");
+            } else {
+                printer.error("❌ Analysis failed with exit code: " + exitCode);
+            }
+
+        } catch (picocli.CommandLine.ParameterException e) {
+            printer.error("Invalid arguments: " + e.getMessage());
+            printer.info("Type /analyze without arguments for usage help");
         } catch (Exception e) {
             printer.error("Analysis failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
         }
+    }
+
+    /**
+     * Parse command line arguments from a string
+     * Handles quoted arguments properly
+     */
+    private String[] parseCommandLineArgs(String argsString) {
+        List<String> args = new ArrayList<>();
+        boolean inQuotes = false;
+        StringBuilder current = new StringBuilder();
+
+        for (int i = 0; i < argsString.length(); i++) {
+            char c = argsString.charAt(i);
+
+            if (c == '"') {
+                inQuotes = !inQuotes;
+            } else if (c == ' ' && !inQuotes) {
+                if (current.length() > 0) {
+                    args.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(c);
+            }
+        }
+
+        if (current.length() > 0) {
+            args.add(current.toString());
+        }
+
+        return args.toArray(new String[0]);
     }
 
     /**
      * Handle /suggest command
      */
     private void handleSuggestCommand(String args) {
-        printer.info("Suggestion feature coming in Phase 3");
+        if (args.isEmpty()) {
+            printer.error("Usage: /suggest <path> [options]");
+            printer.info("Options:");
+            printer.info("  -s, --severity <level>   Filter by severity: critical | high | medium | low");
+            printer.info("  -c, --category <type>    Filter by category: memory | buffer | null | leak");
+            printer.info("  --code-fix               Include code fix examples (default: true)");
+            printer.blank();
+            printer.info("Example: /suggest src/main/bzlib.c -s critical --code-fix");
+            return;
+        }
+
+        try {
+            // Create SuggestCommand instance
+            SuggestCommand suggestCmd = new SuggestCommand();
+
+            // Parse arguments using picocli
+            String[] argArray = parseCommandLineArgs(args);
+            picocli.CommandLine cmd = new picocli.CommandLine(suggestCmd);
+
+            // Set parent for printer and config access
+            java.lang.reflect.Field parentField = SuggestCommand.class.getDeclaredField("parent");
+            parentField.setAccessible(true);
+            parentField.set(suggestCmd, parent);
+
+            // Parse and execute
+            int exitCode = cmd.execute(argArray);
+
+            // Show completion message
+            printer.blank();
+            if (exitCode == 0) {
+                printer.success("✅ Suggestions generated successfully!");
+            } else {
+                printer.error("❌ Failed to generate suggestions with exit code: " + exitCode);
+            }
+
+        } catch (picocli.CommandLine.ParameterException e) {
+            printer.error("Invalid arguments: " + e.getMessage());
+            printer.info("Type /suggest without arguments for usage help");
+        } catch (Exception e) {
+            printer.error("Suggestion generation failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
     }
 
     /**
      * Handle /refactor command
      */
     private void handleRefactorCommand(String args) {
-        printer.info("Refactor feature coming in Phase 4");
+        if (args.isEmpty()) {
+            printer.error("Usage: /refactor <path> [options]");
+            printer.info("Options:");
+            printer.info("  -t, --type <type>        Refactor type: fix | rust-migration (default: fix)");
+            printer.info("  -o, --output <dir>       Output directory for refactored code");
+            printer.info("  -f, --file <file>        Source file for Rust migration (required for rust-migration)");
+            printer.info("  -l, --line <number>      Line number for Rust migration (required for rust-migration)");
+            printer.blank();
+            printer.info("Examples:");
+            printer.info("  /refactor src/main -t fix -o output");
+            printer.info("  /refactor src/main -t rust-migration -f bzlib.c -l 234");
+            return;
+        }
+
+        try {
+            // Create RefactorCommand instance
+            RefactorCommand refactorCmd = new RefactorCommand();
+
+            // Parse arguments using picocli
+            String[] argArray = parseCommandLineArgs(args);
+            picocli.CommandLine cmd = new picocli.CommandLine(refactorCmd);
+
+            // Set parent for printer and config access
+            java.lang.reflect.Field parentField = RefactorCommand.class.getDeclaredField("parent");
+            parentField.setAccessible(true);
+            parentField.set(refactorCmd, parent);
+
+            // Parse and execute
+            int exitCode = cmd.execute(argArray);
+
+            // Show completion message
+            printer.blank();
+            if (exitCode == 0) {
+                printer.success("✅ Refactoring completed successfully!");
+            } else {
+                printer.error("❌ Refactoring failed with exit code: " + exitCode);
+            }
+
+        } catch (picocli.CommandLine.ParameterException e) {
+            printer.error("Invalid arguments: " + e.getMessage());
+            printer.info("Type /refactor without arguments for usage help");
+        } catch (Exception e) {
+            printer.error("Refactoring failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
     }
 
     /**
