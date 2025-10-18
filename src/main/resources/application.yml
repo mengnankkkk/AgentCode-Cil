@@ -27,49 +27,58 @@ ai:
         standard: claude-3-sonnet-20240229
         premium: claude-3-opus-20240229
 
+    siliconflow:
+      api_key: 
+      base_url: https://api.siliconflow.cn/v1
+      models:
+        fast: Qwen/Qwen2.5-7B-Instruct
+        standard: Qwen/Qwen2.5-14B-Instruct
+        premium: Qwen/Qwen2.5-72B-Instruct
+        coder: Qwen/Qwen2.5-Coder-7B-Instruct
+
   # Role-based Model Selection
   roles:
     analyzer:
-      provider: openai
+      provider: siliconflow
       model: fast  # Use fast model for quick analysis
       temperature: 0.3
       max_tokens: 1000
 
     planner:
-      provider: claude
+      provider: siliconflow
       model: standard  # Use standard model for design
       temperature: 0.5
       max_tokens: 2500
 
     coder:
-      provider: claude
-      model: standard  # Use standard model for code generation
+      provider: siliconflow
+      model: coder  # Use Qwen Coder for code generation
       temperature: 0.2
       max_tokens: 3000
 
     reviewer:
-      provider: claude
-      model: premium  # Use premium model for thorough review
+      provider: siliconflow
+      model: standard  # Use standard model for thorough review
       temperature: 0.7
       max_tokens: 2500
 
     tester:
-      provider: openai
-      model: gpt-4  # Use GPT-4 for validation and testing
+      provider: siliconflow
+      model: standard  # Use standard model for validation and testing
       temperature: 0.3
       max_tokens: 2000
 
   # Command-based Model Selection (for CLI commands)
   commands:
     refactor:
-      provider: openai
-      model: gpt-4  # Use GPT-4 for Rust migration advice
+      provider: siliconflow
+      model: coder  # Use Qwen Coder for Rust migration advice
       temperature: 0.3
       max_tokens: 4096
 
     suggest:
-      provider: claude
-      model: standard  # Use Claude for security suggestions
+      provider: siliconflow
+      model: standard  # Use standard model for security suggestions
       temperature: 0.5
       max_tokens: 3000
 
