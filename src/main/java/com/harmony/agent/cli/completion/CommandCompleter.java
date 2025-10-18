@@ -11,14 +11,18 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**
  * Command completer for interactive mode
- * Provides tab completion for slash commands and file paths
+ * Provides tab completion for slash commands, system commands, and file paths
  */
 public class CommandCompleter implements Completer {
 
+    private final Supplier<File> workingDirectorySupplier;
+
+    // Slash commands
     private static final List<CommandInfo> COMMANDS = List.of(
         // Task Planning
         new CommandInfo("/plan", "Break down requirement into tasks", false),
@@ -39,18 +43,80 @@ public class CommandCompleter implements Completer {
         new CommandInfo("/q", "Exit interactive mode (short)", false)
     );
 
+    // System commands (common cross-platform commands)
+    private static final List<CommandInfo> SYSTEM_COMMANDS = List.of(
+        // Directory operations
+        new CommandInfo("$ pwd", "Print working directory", false),
+        new CommandInfo("$ cd", "Change directory", true),
+        new CommandInfo("$ ls", "List directory contents (Unix/Windows)", true),
+        new CommandInfo("$ dir", "List directory contents (Windows)", true),
+        // File operations
+        new CommandInfo("$ cat", "Display file contents", true),
+        new CommandInfo("$ more", "Display file contents (paginated)", true),
+        new CommandInfo("$ less", "Display file contents (scrollable)", true),
+        new CommandInfo("$ head", "Display first lines of file", true),
+        new CommandInfo("$ tail", "Display last lines of file", true),
+        // File management
+        new CommandInfo("$ cp", "Copy files/directories", true),
+        new CommandInfo("$ mv", "Move/rename files", true),
+        new CommandInfo("$ mkdir", "Create directory", true),
+        new CommandInfo("$ touch", "Create empty file", true),
+        new CommandInfo("$ rm", "Remove file (use with caution)", true),
+        // Search and info
+        new CommandInfo("$ find", "Search for files", true),
+        new CommandInfo("$ grep", "Search text in files", true),
+        new CommandInfo("$ echo", "Print text/variables", false),
+        new CommandInfo("$ which", "Locate command", false),
+        // Development tools
+        new CommandInfo("$ mvn", "Maven build tool", false),
+        new CommandInfo("$ java", "Run Java program", true),
+        new CommandInfo("$ javac", "Compile Java code", true),
+        new CommandInfo("$ python", "Run Python script", true),
+        new CommandInfo("$ python3", "Run Python 3 script", true),
+        new CommandInfo("$ node", "Run Node.js script", true),
+        new CommandInfo("$ npm", "Node package manager", false),
+        new CommandInfo("$ git", "Git version control", false)
+    );
+
+    /**
+     * Constructor with working directory supplier
+     * @param workingDirectorySupplier Supplier that provides the current working directory
+     */
+    public CommandCompleter(Supplier<File> workingDirectorySupplier) {
+        this.workingDirectorySupplier = workingDirectorySupplier;
+    }
+
+    /**
+     * Get current working directory
+     */
+    private File getCurrentWorkingDirectory() {
+        return workingDirectorySupplier.get();
+    }
+
     @Override
     public void complete(LineReader reader, ParsedLine line, List<Candidate> candidates) {
-        String buffer = line.line();
+        String buffer = line.line().trim();  // Trim whitespace
         String word = line.word();
 
-        // If buffer starts with /, complete commands
+        // If buffer starts with /, complete slash commands or their paths
         if (buffer.startsWith("/")) {
-            completeCommand(buffer, word, candidates);
+            if (buffer.contains(" ")) {
+                // Has space, complete file path
+                completeFilePath(buffer, word, candidates);
+            } else {
+                // Just command, complete command names
+                completeCommand(buffer, word, candidates);
+            }
         }
-        // If buffer contains a command that needs file path
-        else if (needsFilePathCompletion(buffer)) {
-            completeFilePath(buffer, word, candidates);
+        // If buffer starts with $, complete system commands or their paths
+        else if (buffer.startsWith("$")) {
+            if (buffer.contains(" ")) {
+                // Has space, complete file path
+                completeSystemFilePath(buffer, word, candidates);
+            } else {
+                // Just command, complete command names
+                completeSystemCommand(buffer, word, candidates);
+            }
         }
     }
 
@@ -58,33 +124,17 @@ public class CommandCompleter implements Completer {
      * Complete slash commands
      */
     private void completeCommand(String buffer, String word, List<Candidate> candidates) {
-        // Find commands that match the current input
-        String input = buffer.trim();
+        // Extract the command part after /
+        String input = buffer.substring(1).trim();  // Remove "/"
 
         for (CommandInfo cmd : COMMANDS) {
-            if (cmd.name.startsWith(input)) {
+            String cmdName = cmd.name.substring(1);  // Remove "/" from stored name
+            if (cmdName.startsWith(input)) {
                 candidates.add(new Candidate(
-                    cmd.name,
-                    cmd.name,
+                    cmd.name,           // value: "/plan", "/analyze" (complete with prefix)
+                    cmdName,            // display: "plan", "analyze" (show without prefix)
                     null,
-                    cmd.description,
-                    null,
-                    null,
-                    true
-                ));
-            }
-        }
-
-        // If we have exactly one match and it needs a file path, add space
-        if (candidates.size() == 1) {
-            CommandInfo matched = findCommand(candidates.get(0).value());
-            if (matched != null && matched.needsFilePath) {
-                candidates.clear();
-                candidates.add(new Candidate(
-                    matched.name + " ",
-                    matched.name + " ",
-                    null,
-                    matched.description,
+                    cmd.description,    // description shown in table
                     null,
                     null,
                     false
@@ -101,29 +151,124 @@ public class CommandCompleter implements Completer {
         String[] parts = buffer.trim().split("\\s+", 2);
         String pathInput = parts.length > 1 ? parts[1] : "";
 
+        completePathInternal(pathInput, candidates, false);
+    }
+
+    /**
+     * Find command info by name
+     */
+    private CommandInfo findCommand(String name) {
+        for (CommandInfo cmd : COMMANDS) {
+            if (cmd.name.equals(name)) {
+                return cmd;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find system command info by name
+     */
+    private CommandInfo findSystemCommand(String name) {
+        for (CommandInfo cmd : SYSTEM_COMMANDS) {
+            if (cmd.name.equals(name)) {
+                return cmd;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Complete system commands ($ prefix)
+     */
+    private void completeSystemCommand(String buffer, String word, List<Candidate> candidates) {
+        // Extract the command part after $
+        String input = buffer.substring(1).trim();  // Remove "$"
+
+        for (CommandInfo cmd : SYSTEM_COMMANDS) {
+            String cmdName = cmd.name.substring(2);  // Remove "$ " from stored name
+            if (cmdName.startsWith(input)) {
+                // Return compact format: $cd, $cat (no space to avoid Windows escaping)
+                String compactValue = "$" + cmdName;
+
+                candidates.add(new Candidate(
+                    compactValue,       // value: "$cd", "$cat" (compact, no space)
+                    cmdName,            // display: "cd", "cat" (show without prefix)
+                    null,
+                    cmd.description,    // description shown in table
+                    null,
+                    null,
+                    false
+                ));
+            }
+        }
+    }
+
+    /**
+     * Complete file paths for system commands
+     */
+    private void completeSystemFilePath(String buffer, String word, List<Candidate> candidates) {
+        // Extract the file path part after the command
+        String[] parts = buffer.trim().split("\\s+", 2);
+        String pathInput = parts.length > 1 ? parts[1] : "";
+
+        // For cd command, only show directories (match compact format: $cd)
+        boolean directoriesOnly = buffer.trim().startsWith("$cd") || buffer.trim().startsWith("$ cd");
+
+        completePathInternal(pathInput, candidates, directoriesOnly);
+    }
+
+    /**
+     * Internal path completion logic (shared between slash and system commands)
+     */
+    private void completePathInternal(String pathInput, List<Candidate> candidates, boolean directoriesOnly) {
         try {
             Path basePath;
             String prefix;
+            File currentWorkingDirectory = getCurrentWorkingDirectory();
 
+            // Handle empty input or current directory
             if (pathInput.isEmpty() || pathInput.equals(".")) {
-                basePath = Paths.get(".");
+                basePath = currentWorkingDirectory.toPath();
                 prefix = "";
-            } else if (pathInput.contains(File.separator)) {
-                int lastSep = pathInput.lastIndexOf(File.separator);
-                String dir = pathInput.substring(0, lastSep + 1);
-                prefix = pathInput.substring(lastSep + 1);
-                basePath = Paths.get(dir.isEmpty() ? "." : dir);
-            } else {
-                basePath = Paths.get(".");
+            }
+            // Handle paths with separators
+            else if (pathInput.contains(File.separator) || pathInput.contains("/")) {
+                // Normalize separator
+                String normalizedPath = pathInput.replace("/", File.separator);
+
+                int lastSep = normalizedPath.lastIndexOf(File.separator);
+                String dir = normalizedPath.substring(0, lastSep + 1);
+                prefix = normalizedPath.substring(lastSep + 1);
+
+                // Handle absolute vs relative paths
+                if (normalizedPath.startsWith(File.separator) || (File.separator.equals("\\") && normalizedPath.length() > 1 && normalizedPath.charAt(1) == ':')) {
+                    basePath = Paths.get(dir.isEmpty() ? File.separator : dir);
+                } else {
+                    basePath = new File(currentWorkingDirectory, dir).toPath();
+                }
+            }
+            // Simple filename in current directory
+            else {
+                basePath = currentWorkingDirectory.toPath();
                 prefix = pathInput;
             }
 
+            // Create final variables for lambda
+            final String finalPrefix = prefix;
+            final String finalPathInput = pathInput;
+
+            // List matching files/directories
             if (Files.exists(basePath) && Files.isDirectory(basePath)) {
                 try (Stream<Path> paths = Files.list(basePath)) {
                     paths
                         .filter(p -> {
                             String name = p.getFileName().toString();
-                            return prefix.isEmpty() || name.startsWith(prefix);
+                            // For cd, only show directories
+                            if (directoriesOnly && !Files.isDirectory(p)) {
+                                return false;
+                            }
+                            return finalPrefix.isEmpty() || name.startsWith(finalPrefix);
                         })
                         .forEach(p -> {
                             String name = p.getFileName().toString();
@@ -131,9 +276,12 @@ public class CommandCompleter implements Completer {
 
                             // Build the completion value
                             String completion;
-                            if (pathInput.contains(File.separator)) {
-                                int lastSep = pathInput.lastIndexOf(File.separator);
-                                String dir = pathInput.substring(0, lastSep + 1);
+                            if (finalPathInput.contains(File.separator) || finalPathInput.contains("/")) {
+                                int lastSep = Math.max(
+                                    finalPathInput.lastIndexOf(File.separator),
+                                    finalPathInput.lastIndexOf("/")
+                                );
+                                String dir = finalPathInput.substring(0, lastSep + 1);
                                 completion = dir + name;
                             } else {
                                 completion = name;
@@ -159,33 +307,6 @@ public class CommandCompleter implements Completer {
         } catch (Exception e) {
             // Silently ignore errors during completion
         }
-    }
-
-    /**
-     * Check if current buffer needs file path completion
-     */
-    private boolean needsFilePathCompletion(String buffer) {
-        String trimmed = buffer.trim();
-
-        for (CommandInfo cmd : COMMANDS) {
-            if (cmd.needsFilePath && trimmed.startsWith(cmd.name + " ")) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Find command info by name
-     */
-    private CommandInfo findCommand(String name) {
-        for (CommandInfo cmd : COMMANDS) {
-            if (cmd.name.equals(name)) {
-                return cmd;
-            }
-        }
-        return null;
     }
 
     /**

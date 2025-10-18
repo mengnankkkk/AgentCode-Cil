@@ -6,7 +6,8 @@
       "Bash(fi)",
       "Bash(mvn:*)",
       "Bash(java -jar:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "mcp__thinking__sequentialthinking"
     ],
     "deny": [],
     "ask": []

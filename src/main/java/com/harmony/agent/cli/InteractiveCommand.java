@@ -14,9 +14,12 @@ import org.jline.utils.InfoCmp;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
 /**
@@ -31,6 +34,38 @@ import java.util.concurrent.Callable;
 )
 public class InteractiveCommand implements Callable<Integer> {
 
+    // Dangerous system commands that should be blocked
+    private static final Set<String> DANGEROUS_COMMANDS = Set.of(
+        "rm -rf", "rm -r", "rm -fr",
+        "format",
+        "dd",
+        "mkfs",
+        "fdisk",
+        "> /dev/sda", // Disk overwrites
+        ":(){ :|:& };:", // Fork bomb
+        "chmod -R 777",
+        "chown -R"
+    );
+
+    // Dangerous command patterns (for Unix)
+    private static final Set<String> DANGEROUS_UNIX_PATTERNS = Set.of(
+        "sudo rm",
+        "sudo dd",
+        "sudo mkfs",
+        "sudo fdisk",
+        "sudo chmod",
+        "sudo chown"
+    );
+
+    // Dangerous command patterns (for Windows)
+    private static final Set<String> DANGEROUS_WINDOWS_PATTERNS = Set.of(
+        "format c:",
+        "format d:",
+        "del /f /s /q",
+        "rd /s /q c:",
+        "rd /s /q d:"
+    );
+
     @ParentCommand
     private HarmonyAgentCLI parent;
 
@@ -43,11 +78,15 @@ public class InteractiveCommand implements Callable<Integer> {
     private LLMClient llmClient;
     private TodoListManager todoListManager;
 
+    // System command execution support
+    private File currentWorkingDirectory;
+
     @Override
     public Integer call() {
         printer = parent.getPrinter();
         configManager = parent.getConfigManager();
         conversationHistory = new ArrayList<>();
+        currentWorkingDirectory = new File(System.getProperty("user.dir"));
 
         try {
             // Initialize terminal and line reader
@@ -55,15 +94,21 @@ public class InteractiveCommand implements Callable<Integer> {
                 .system(true)
                 .build();
 
+            // Configure parser to handle our special characters
+            DefaultParser parser = new DefaultParser();
+            parser.setEofOnUnclosedQuote(true);
+            parser.setEofOnEscapedNewLine(true);
+
             lineReader = LineReaderBuilder.builder()
                 .terminal(terminal)
-                .completer(new CommandCompleter())
-                .parser(new DefaultParser())
+                .completer(new CommandCompleter(() -> currentWorkingDirectory))
+                .parser(parser)
                 .history(new DefaultHistory())
-                .option(LineReader.Option.CASE_INSENSITIVE, true)
-                .option(LineReader.Option.AUTO_GROUP, true)
-                .option(LineReader.Option.AUTO_MENU_LIST, true)
-                .option(LineReader.Option.INSERT_TAB, false)
+                .option(LineReader.Option.CASE_INSENSITIVE, false)  // Keep case sensitive for system commands
+                .option(LineReader.Option.AUTO_GROUP, false)        // Disable auto grouping
+                .option(LineReader.Option.AUTO_MENU_LIST, true)     // Show menu list
+                .option(LineReader.Option.INSERT_TAB, false)        // Tab triggers completion
+                .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)  // Disable ! expansion
                 .build();
 
             // Setup Ctrl+T key binding for viewing todolist
@@ -155,6 +200,7 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.info("  • Plan tasks: /plan <requirement> - AI-powered task breakdown");
         printer.info("  • Execute tasks: /next - Intelligent role routing");
         printer.info("  • View tasks: /tasks or Ctrl+T - See all tasks");
+        printer.info("  • System commands: $ <command> - Execute shell commands (NEW!)");
         printer.info("  • Use commands: /analyze, /suggest, /help, /exit");
         printer.info("  • Chat naturally: Ask questions about security, code, etc.");
         printer.blank();
@@ -198,6 +244,9 @@ public class InteractiveCommand implements Callable<Integer> {
         // Check for slash commands
         if (input.startsWith("/")) {
             handleSlashCommand(input);
+        } else if (input.startsWith("$")) {
+            // System commands (shell commands)
+            handleSystemCommand(input.substring(1).trim());
         } else {
             // Natural language chat
             handleChat(input);
@@ -302,6 +351,87 @@ public class InteractiveCommand implements Callable<Integer> {
             if (parent.isVerbose()) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    /**
+     * Handle system commands ($ prefix commands)
+     */
+    private void handleSystemCommand(String command) {
+        if (command.isEmpty()) {
+            printer.warning("Empty system command. Example: $ ls -la");
+            return;
+        }
+
+        // Extract command name (first word)
+        String cmdName = command.split("\\s+")[0].toLowerCase();
+
+        // Handle special commands that need preprocessing
+        switch (cmdName) {
+            case "cd":
+                handleCdCommand(command);
+                break;
+
+            case "pwd":
+                handlePwdCommand();
+                break;
+
+            case "ls":
+                // Translate ls to appropriate command for platform
+                handleLsCommand(command);
+                break;
+
+            case "cat":
+            case "head":
+            case "tail":
+                // These work on both platforms (mostly)
+                executeSystemCommand(command);
+                break;
+
+            default:
+                // Execute generic system command
+                executeSystemCommand(command);
+                break;
+        }
+    }
+
+    /**
+     * Handle ls command with cross-platform support
+     * Windows users can use $ ls and it works like dir
+     */
+    private void handleLsCommand(String command) {
+        if (isWindows()) {
+            // On Windows, translate ls to dir
+            String dirCommand;
+            if (command.trim().equals("ls")) {
+                // Simple ls -> dir
+                dirCommand = "dir";
+            } else if (command.contains(" -")) {
+                // ls with flags -> attempt translation
+                String args = command.substring(2).trim();
+
+                // Translate common flags
+                if (args.contains("-la") || args.contains("-al")) {
+                    dirCommand = "dir /a";
+                } else if (args.contains("-l")) {
+                    dirCommand = "dir";
+                } else if (args.contains("-a")) {
+                    dirCommand = "dir /a";
+                } else {
+                    // Keep any path argument
+                    String cleanArgs = args.replaceAll("-[a-zA-Z]+", "").trim();
+                    dirCommand = cleanArgs.isEmpty() ? "dir" : "dir " + cleanArgs;
+                }
+            } else {
+                // ls with path argument
+                String path = command.substring(2).trim();
+                dirCommand = "dir " + path;
+            }
+
+            executeSystemCommand(dirCommand);
+        } else {
+            // Unix/Linux/Mac - use ls directly
+            executeSystemCommand(command);
         }
     }
 
@@ -420,6 +550,17 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
         printer.blank();
 
+        printer.subheader("System Commands (NEW!)");
+        printer.keyValue("  $ <command>", "Execute system/shell commands");
+        printer.keyValue("  $ pwd", "Print current working directory");
+        printer.keyValue("  $ cd <path>", "Change directory (supports ~, ./, ../)");
+        printer.keyValue("  $ ls -la", "List files (Unix) or $ dir (Windows)");
+        printer.keyValue("  $ cat file.txt", "View file contents");
+        printer.keyValue("  $ echo \"text\"", "Print text to console");
+        printer.info("  Examples: $ pwd, $ cd src, $ ls -la, $ cat README.md");
+        printer.warning("  ⚠️  Dangerous commands (rm -rf, format, etc.) are blocked");
+        printer.blank();
+
         printer.subheader("General");
         printer.keyValue("  /config", "Show current configuration");
         printer.keyValue("  /history", "Show conversation history");
@@ -437,6 +578,7 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.info("  • Press Ctrl+T to view full task list");
         printer.info("  • Press Ctrl+C to cancel current input");
         printer.info("  • Press Ctrl+D to exit");
+        printer.info("  • Use $ prefix for system commands (NEW!)");
         printer.blank();
     }
 
@@ -513,5 +655,200 @@ public class InteractiveCommand implements Callable<Integer> {
                 System.out.println();
             }
         }
+    }
+
+    // ========================================
+    // System Command Support Methods
+    // ========================================
+
+    /**
+     * Handle cd command - change directory
+     */
+    private void handleCdCommand(String command) {
+        // Extract path from command (everything after "cd")
+        String path = command.substring(2).trim();
+
+        if (path.isEmpty()) {
+            // cd with no arguments - go to home directory
+            path = "~";
+        }
+
+        try {
+            File newDir = resolveDirectory(path);
+
+            // Validate directory exists and is a directory
+            if (!newDir.exists()) {
+                printer.error("Directory not found: " + path);
+                return;
+            }
+
+            if (!newDir.isDirectory()) {
+                printer.error("Not a directory: " + path);
+                return;
+            }
+
+            // Update current working directory
+            currentWorkingDirectory = newDir.getCanonicalFile();
+            printer.success("Changed directory to: " + currentWorkingDirectory.getAbsolutePath());
+
+        } catch (Exception e) {
+            printer.error("Failed to change directory: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle pwd command - print working directory
+     */
+    private void handlePwdCommand() {
+        printer.info(currentWorkingDirectory.getAbsolutePath());
+    }
+
+    /**
+     * Execute generic system command via ProcessBuilder
+     */
+    private void executeSystemCommand(String command) {
+        // Security check - block dangerous commands
+        if (!isSafeCommand(command)) {
+            return; // Error already displayed by isSafeCommand()
+        }
+
+        try {
+            // Build command for platform
+            String[] shellCommand = getShellCommand(command);
+
+            // Create process builder
+            ProcessBuilder pb = new ProcessBuilder(shellCommand);
+            pb.directory(currentWorkingDirectory);
+            pb.redirectErrorStream(true); // Merge stderr into stdout
+
+            // Execute command
+            Process process = pb.start();
+
+            // Read output
+            StringBuilder output = new StringBuilder();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+
+            // Wait for completion
+            int exitCode = process.waitFor();
+
+            // Display output
+            if (output.length() > 0) {
+                // Remove trailing newline
+                String result = output.toString().trim();
+                System.out.println(result);
+            }
+
+            // Show exit code if non-zero
+            if (exitCode != 0 && parent.isVerbose()) {
+                printer.warning("Command exited with code: " + exitCode);
+            }
+
+        } catch (java.io.IOException e) {
+            printer.error("Failed to execute command: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        } catch (InterruptedException e) {
+            printer.error("Command execution interrupted");
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            printer.error("Unexpected error: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Get shell command for current platform
+     */
+    private String[] getShellCommand(String command) {
+        if (isWindows()) {
+            return new String[]{"cmd", "/c", command};
+        } else {
+            return new String[]{"sh", "-c", command};
+        }
+    }
+
+    /**
+     * Resolve directory path (supports relative, absolute, and ~ expansion)
+     *
+     * @param path The path to resolve
+     * @return Resolved File object
+     */
+    private File resolveDirectory(String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return currentWorkingDirectory;
+        }
+
+        path = path.trim();
+
+        // Handle ~ (home directory)
+        if (path.startsWith("~")) {
+            String home = System.getProperty("user.home");
+            path = home + path.substring(1);
+        }
+
+        File file = new File(path);
+
+        // If absolute path, use directly
+        if (file.isAbsolute()) {
+            return file;
+        }
+
+        // Relative path - resolve against current working directory
+        return new File(currentWorkingDirectory, path);
+    }
+
+    /**
+     * Check if running on Windows
+     *
+     * @return true if Windows, false otherwise
+     */
+    private boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("windows");
+    }
+
+    /**
+     * Check if a command is safe to execute
+     *
+     * @param command The command to check
+     * @return true if safe, false if dangerous
+     */
+    private boolean isSafeCommand(String command) {
+        String cmdLower = command.toLowerCase().trim();
+
+        // Check general dangerous commands
+        for (String dangerous : DANGEROUS_COMMANDS) {
+            if (cmdLower.contains(dangerous.toLowerCase())) {
+                printer.error("⚠️  Dangerous command blocked: " + dangerous);
+                printer.warning("This command could cause system damage");
+                return false;
+            }
+        }
+
+        // Check platform-specific dangerous patterns
+        Set<String> platformPatterns = isWindows()
+            ? DANGEROUS_WINDOWS_PATTERNS
+            : DANGEROUS_UNIX_PATTERNS;
+
+        for (String dangerous : platformPatterns) {
+            if (cmdLower.contains(dangerous.toLowerCase())) {
+                printer.error("⚠️  Dangerous command blocked: " + dangerous);
+                printer.warning("This command could cause system damage");
+                return false;
+            }
+        }
+
+        return true;
     }
 }
