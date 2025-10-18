@@ -82,6 +82,7 @@ public class LLMClient {
         return switch (roleName) {
             case "analyzer" -> "openai";
             case "planner", "coder", "reviewer" -> "claude";
+            // Note: "tester" is not an LLM role - it executes tools
             default -> "openai";
         };
     }
@@ -113,6 +114,7 @@ public class LLMClient {
             case "planner" -> "claude-3-sonnet-20240229";
             case "coder" -> "claude-3-sonnet-20240229";
             case "reviewer" -> "claude-3-opus-20240229";
+            // Note: "tester" is not an LLM role - it executes tools
             default -> configManager.getConfig().getAi().getModel();
         };
     }
@@ -277,6 +279,38 @@ public class LLMClient {
         } catch (Exception e) {
             logger.error("Failed to execute task using LLM", e);
             return executeFallback(taskDescription);
+        }
+    }
+
+    /**
+     * Execute a specific role with a prompt and return content
+     * This is a convenience method for direct role execution
+     *
+     * @param roleName The role to execute (planner, coder, reviewer, tester)
+     * @param prompt The prompt to send to the role
+     * @return The response content as string
+     * @throws RuntimeException if execution fails
+     */
+    public String executeRole(String roleName, String prompt) {
+        logger.info("Executing {} role with prompt length: {}", roleName, prompt.length());
+
+        if (!useRealLLM) {
+            throw new RuntimeException("LLM is not available. Please configure API keys.");
+        }
+
+        try {
+            ConversationContext context = new ConversationContext(prompt);
+            LLMResponse response = orchestrator.executeRole(roleName, prompt, context);
+
+            if (response.isSuccess()) {
+                logger.info("{} role executed successfully", roleName);
+                return response.getContent();
+            } else {
+                throw new RuntimeException("Role execution failed: " + response.getErrorMessage());
+            }
+        } catch (Exception e) {
+            logger.error("Failed to execute {} role", roleName, e);
+            throw new RuntimeException("Failed to execute " + roleName + " role: " + e.getMessage(), e);
         }
     }
 

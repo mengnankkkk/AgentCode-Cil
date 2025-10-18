@@ -45,6 +45,7 @@ public class RoleFactory {
         factory.registerRole("planner", new PlannerRole());
         factory.registerRole("coder", new CoderRole());
         factory.registerRole("reviewer", new ReviewerRole());
+        // Note: Tester is NOT an LLM role - it's a tool executor
 
         return factory;
     }

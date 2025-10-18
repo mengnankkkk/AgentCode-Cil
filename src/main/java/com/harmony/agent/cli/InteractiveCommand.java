@@ -1,5 +1,11 @@
 package com.harmony.agent.cli;
 
+import com.harmony.agent.autofix.AutoFixOrchestrator;
+import com.harmony.agent.autofix.ChangeManager;
+import com.harmony.agent.autofix.CodeValidator;
+import com.harmony.agent.autofix.DiffDisplay;
+import com.harmony.agent.autofix.PendingChange;
+import com.harmony.agent.autofix.AppliedChange;
 import com.harmony.agent.cli.completion.CommandCompleter;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.llm.LLMClient;
@@ -82,6 +88,9 @@ public class InteractiveCommand implements Callable<Integer> {
     private LLMClient llmClient;
     private TodoListManager todoListManager;
     private ToolExecutor toolExecutor;
+    private AutoFixOrchestrator autoFixOrchestrator;  // NEW: Auto-fix orchestrator
+    private ChangeManager changeManager;  // NEW: Change manager for /accept and /rollback
+    private AnalysisResult lastAnalysisResult;  // NEW: Store last analyze result for /autofix
 
     // System command execution support
     private File currentWorkingDirectory;
@@ -127,6 +136,11 @@ public class InteractiveCommand implements Callable<Integer> {
 
             // Initialize ToolExecutor
             toolExecutor = new ToolExecutor(currentWorkingDirectory);
+
+            // Initialize AutoFixOrchestrator and ChangeManager
+            CodeValidator codeValidator = new CodeValidator(toolExecutor, currentWorkingDirectory);
+            autoFixOrchestrator = new AutoFixOrchestrator(llmClient, codeValidator);
+            changeManager = new ChangeManager();
 
             // Show welcome message
             showWelcome();
@@ -335,6 +349,22 @@ public class InteractiveCommand implements Callable<Integer> {
 
             case "spotbugs":
                 handleSpotBugsCommand(args);
+                break;
+
+            case "autofix":
+                handleAutoFixCommand(args);
+                break;
+
+            case "accept":
+                handleAcceptCommand();
+                break;
+
+            case "discard":
+                handleDiscardCommand();
+                break;
+
+            case "rollback":
+                handleRollbackCommand();
                 break;
 
             default:
@@ -676,6 +706,9 @@ public class InteractiveCommand implements Callable<Integer> {
             printer.spinner("Analyzing", true);
             printer.blank();
 
+            // Store result for /autofix command
+            lastAnalysisResult = result;
+
             if (result.isSuccess()) {
                 printer.success("✓ No bugs found");
             } else {
@@ -693,11 +726,13 @@ public class InteractiveCommand implements Callable<Integer> {
                 printer.subheader("Bugs Found:");
                 for (int i = 0; i < Math.min(10, result.getBugs().size()); i++) {
                     AnalysisResult.Bug bug = result.getBugs().get(i);
-                    printer.warning("  " + bug.toString());
+                    printer.warning(String.format("  [%d] %s", i, bug.toString()));
                 }
                 if (result.getBugs().size() > 10) {
                     printer.info("  ... and " + (result.getBugs().size() - 10) + " more bugs");
                 }
+                printer.blank();
+                printer.info("💡 Tip: Use /autofix <issue_number> to automatically fix an issue");
             }
 
             if (parent.isVerbose()) {
@@ -713,6 +748,164 @@ public class InteractiveCommand implements Callable<Integer> {
             }
         }
         printer.blank();
+    }
+
+    /**
+     * Handle /autofix command - generate a fix for a security issue
+     */
+    private void handleAutoFixCommand(String args) {
+        if (args.isEmpty()) {
+            printer.error("Usage: /autofix <issue_id> or /autofix <file>:<line>");
+            printer.info("Example: /autofix issue_123 or /autofix src/main.c:45");
+            printer.info("Run /analyze first to discover issues");
+            return;
+        }
+
+        if (lastAnalysisResult == null || lastAnalysisResult.getBugs().isEmpty()) {
+            printer.warning("No issues found. Run /spotbugs first to discover issues.");
+            return;
+        }
+
+        try {
+            // Try to find the issue
+            AnalysisResult.Bug targetBug = null;
+
+            // Case 1: Issue ID (like "issue_123" or just the number)
+            if (args.matches("\\d+") || args.startsWith("issue_")) {
+                int issueIndex = args.startsWith("issue_")
+                    ? Integer.parseInt(args.substring(6))
+                    : Integer.parseInt(args);
+
+                if (issueIndex >= 0 && issueIndex < lastAnalysisResult.getBugs().size()) {
+                    targetBug = lastAnalysisResult.getBugs().get(issueIndex);
+                }
+            }
+            // Case 2: file:line format
+            else if (args.contains(":")) {
+                String[] parts = args.split(":");
+                if (parts.length == 2) {
+                    String file = parts[0];
+                    int line = Integer.parseInt(parts[1]);
+
+                    for (AnalysisResult.Bug bug : lastAnalysisResult.getBugs()) {
+                        if (bug.getFile().endsWith(file) && bug.getLine() == line) {
+                            targetBug = bug;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (targetBug == null) {
+                printer.error("Issue not found: " + args);
+                printer.info("Available issues:");
+                for (int i = 0; i < Math.min(5, lastAnalysisResult.getBugs().size()); i++) {
+                    AnalysisResult.Bug bug = lastAnalysisResult.getBugs().get(i);
+                    printer.info(String.format("  [%d] %s:%d - %s", i, bug.getFile(), bug.getLine(), bug.getMessage()));
+                }
+                return;
+            }
+
+            // Convert Bug to SecurityIssue (placeholder - needs proper conversion)
+            printer.info("Found issue: " + targetBug.getMessage());
+            printer.warning("Auto-fix integration coming soon!");
+            printer.info("Will generate fix for: " + targetBug.getFile() + ":" + targetBug.getLine());
+
+            // TODO: Convert AnalysisResult.Bug to SecurityIssue and call autoFixOrchestrator.generateFix()
+
+        } catch (Exception e) {
+            printer.error("Failed to process autofix request: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle /accept command - accept and apply the pending change
+     */
+    private void handleAcceptCommand() {
+        if (!changeManager.hasPendingChange()) {
+            printer.warning("No pending change to accept");
+            printer.info("Use /autofix to generate a fix first");
+            return;
+        }
+
+        try {
+            PendingChange pending = changeManager.getPendingChange().get();
+
+            printer.blank();
+            printer.spinner("Applying change...", false);
+
+            AppliedChange applied = changeManager.acceptPendingChange();
+
+            printer.spinner("Applying change", true);
+            printer.blank();
+
+            printer.success("✅ Change accepted and applied!");
+            printer.keyValue("  File", applied.getFilePath().toString());
+            printer.keyValue("  Change ID", applied.getId());
+            printer.blank();
+
+            printer.info("💡 Tip: Use /rollback to undo this change if needed");
+
+        } catch (IOException e) {
+            printer.error("Failed to apply change: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle /discard command - discard the pending change
+     */
+    private void handleDiscardCommand() {
+        if (!changeManager.hasPendingChange()) {
+            printer.warning("No pending change to discard");
+            return;
+        }
+
+        PendingChange pending = changeManager.getPendingChange().get();
+        changeManager.discardPendingChange();
+
+        printer.blank();
+        printer.info("❌ Pending change discarded: " + pending.getSummary());
+        printer.blank();
+    }
+
+    /**
+     * Handle /rollback command - rollback the last accepted change
+     */
+    private void handleRollbackCommand() {
+        if (!changeManager.canRollback()) {
+            printer.warning("No changes to rollback");
+            printer.info("History is empty - no changes have been accepted yet");
+            return;
+        }
+
+        try {
+            printer.blank();
+            printer.spinner("Rolling back last change...", false);
+
+            AppliedChange rolledBack = changeManager.rollbackLastChange();
+
+            printer.spinner("Rolling back last change", true);
+            printer.blank();
+
+            printer.success("✅ Change rolled back successfully!");
+            printer.keyValue("  File", rolledBack.getFilePath().toString());
+            printer.keyValue("  Change ID", rolledBack.getId());
+            printer.blank();
+
+            printer.info(String.format("📊 Remaining changes in history: %d", changeManager.getHistorySize()));
+
+        } catch (IOException e) {
+            printer.error("Failed to rollback change: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
     }
 
     /**
@@ -734,6 +927,14 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.keyValue("  /analyze <path>", "Analyze code for security issues");
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
+        printer.blank();
+
+        printer.subheader("Auto-Fix (NEW!)");
+        printer.keyValue("  /autofix <issue>", "Generate automatic fix for security issue");
+        printer.keyValue("  /accept", "Accept and apply pending change");
+        printer.keyValue("  /discard", "Discard pending change");
+        printer.keyValue("  /rollback", "Undo last accepted change");
+        printer.info("  💡 Changes are staged in memory - review before /accept");
         printer.blank();
 
         printer.subheader("Build & Test Tools (NEW!)");
