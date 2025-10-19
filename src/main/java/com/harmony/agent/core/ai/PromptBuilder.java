@@ -199,6 +199,81 @@ public class PromptBuilder {
     }
 
     /**
+     * Build prompt for security fix suggestions
+     * Generates concrete code fixes for security issues
+     *
+     * @param issue The security issue to fix
+     * @param codeSlice The code context around the issue
+     * @return Formatted prompt for LLM
+     */
+    public static String buildSecurityFixPrompt(SecurityIssue issue, String codeSlice) {
+        return String.format("""
+            You are a security expert specializing in C/C++ vulnerability remediation.
+            A security issue has been identified:
+
+            **Issue Details:**
+            - Title: %s
+            - Description: %s
+            - Location: %s:%d
+            - Severity: %s
+            - Category: %s
+            - Analyzer: %s
+
+            **Code Context:**
+            ```c
+            %s
+            ```
+
+            Please provide a comprehensive fix suggestion in the following Markdown format:
+
+            ## 🔍 Issue Analysis
+            Explain the security vulnerability in detail, including:
+            - How it can be exploited
+            - What data is at risk
+            - Attack scenarios
+
+            ## 💡 Fix Recommendation
+            Provide step-by-step instructions to fix the issue:
+            1. Primary fix approach
+            2. Alternative approaches (if any)
+            3. Trade-offs to consider
+
+            ## 🔧 Code Fix
+            Provide the corrected code with clear inline comments:
+            ```c
+            // Your fixed code here with detailed comments
+            ```
+
+            ## ✅ Validation
+            How to verify the fix:
+            - Testing strategies
+            - Edge cases to check
+            - Security assertions to add
+
+            ## 📚 Best Practices
+            General security guidelines to prevent similar issues:
+            - Coding patterns to follow
+            - Common pitfalls to avoid
+            - Security checklist items
+
+            Ensure your suggestions are:
+            - Practical and immediately actionable
+            - Preserve the original functionality
+            - Follow secure coding standards (CERT C, CWE guidelines)
+            - Include specific code examples
+            """,
+            issue.getTitle(),
+            issue.getDescription(),
+            issue.getLocation().getFilePath(),
+            issue.getLocation().getLineNumber(),
+            issue.getSeverity().getDisplayName(),
+            issue.getCategory().name(),
+            issue.getAnalyzer(),
+            codeSlice
+        );
+    }
+
+    /**
      * Build generic analysis prompt
      * Flexible prompt for custom analysis tasks
      *

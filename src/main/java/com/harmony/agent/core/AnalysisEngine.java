@@ -179,8 +179,20 @@ public class AnalysisEngine {
                 logger.info("Generating HTML report at: {}", outputPath);
                 reportGenerator.generate(result, outputPath);
                 logger.info("Report generated successfully: {}", outputPath);
+
+                // Also generate JSON report for machine reading (used by suggest/refactor commands)
+                String jsonPath = config.getOutputPath().replaceFirst("\\.html$", ".json");
+                if (jsonPath.equals(config.getOutputPath())) {
+                    jsonPath = config.getOutputPath() + ".json";
+                }
+                Path jsonOutputPath = Paths.get(jsonPath);
+                logger.info("Generating JSON report at: {}", jsonOutputPath);
+                com.harmony.agent.core.report.JsonReportWriter jsonWriter =
+                    new com.harmony.agent.core.report.JsonReportWriter();
+                jsonWriter.write(result, jsonOutputPath);
+                logger.info("JSON report generated successfully: {}", jsonOutputPath);
             } catch (Exception e) {
-                logger.error("Failed to generate HTML report", e);
+                logger.error("Failed to generate report", e);
                 // Don't fail the entire analysis if report generation fails
             }
         }

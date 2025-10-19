@@ -113,15 +113,12 @@ public class DecisionEngine {
                     try {
                         SecurityIssue result = future.get(); // May block
                         if (result != null) {
+                            // ✅ CRITICAL FIX: Only add validated issues (null means filtered)
                             enhancedIssues.add(result);
-
-                            // Check if it was filtered
-                            Object aiFiltered = result.getMetadata().get("ai_filtered");
-                            if (aiFiltered != null && (Boolean) aiFiltered) {
-                                filtered++;
-                            } else {
-                                validated++;
-                            }
+                            validated++;
+                        } else {
+                            // ✅ Result is null - AI filtered it as false positive
+                            filtered++;
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -403,9 +400,10 @@ public class DecisionEngine {
                     // AI confirmed - create enhanced issue
                     return createEnhancedIssue(originalIssue, validation);
                 } else {
-                    // AI marked as false positive - return marked issue (not null)
-                    logger.info("AI filtered false positive: {}", originalIssue.getTitle());
-                    return markAsFiltered(originalIssue, validation.reason);
+                    // ✅ CRITICAL FIX: AI marked as false positive - return null to filter it out
+                    logger.info("AI filtered false positive: {} - Reason: {}",
+                        originalIssue.getTitle(), validation.reason);
+                    return null;  // Return null to completely remove false positives
                 }
             } catch (Exception e) {
                 // AI validation failed - return fallback issue

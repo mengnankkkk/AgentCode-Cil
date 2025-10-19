@@ -30,7 +30,8 @@
       "Bash(python /tmp/fix_template.py:*)",
       "Bash(python /tmp/fix_ai_percentage.py:*)",
       "Bash(python /tmp/fix_endtime.py:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

@@ -4,6 +4,12 @@ import com.harmony.agent.config.AppConfig;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.core.ai.CodeSlicer;
 import com.harmony.agent.core.ai.RustMigrationAdvisor;
+import com.harmony.agent.core.ai.SecuritySuggestionAdvisor;
+import com.harmony.agent.core.model.IssueSeverity;
+import com.harmony.agent.core.model.IssueCategory;
+import com.harmony.agent.core.model.ScanResult;
+import com.harmony.agent.core.model.SecurityIssue;
+import com.harmony.agent.core.report.JsonReportWriter;
 import com.harmony.agent.llm.provider.LLMProvider;
 import com.harmony.agent.llm.provider.ProviderFactory;
 import picocli.CommandLine.Command;
@@ -14,14 +20,16 @@ import picocli.CommandLine.ParentCommand;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 /**
  * Refactor command - generates code refactoring suggestions and Rust migration advice
  */
 @Command(
     name = "refactor",
-    description = "Generate code refactoring suggestions and Rust migration advice",
+    description = "Generate code refactoring suggestions and Rust migration advice based on analysis report",
     mixinStandardHelpOptions = true
 )
 public class RefactorCommand implements Callable<Integer> {
@@ -31,7 +39,7 @@ public class RefactorCommand implements Callable<Integer> {
 
     @Parameters(
         index = "0",
-        description = "Source file or directory"
+        description = "Path to JSON report file or source directory"
     )
     private String sourcePath;
 
@@ -58,6 +66,18 @@ public class RefactorCommand implements Callable<Integer> {
         description = "Line number in the file (required for rust-migration type)"
     )
     private Integer lineNumber;
+
+    @Option(
+        names = {"-n", "--number"},
+        description = "Issue number to refactor (for fix type)"
+    )
+    private Integer issueNumber;
+
+    @Option(
+        names = {"--max"},
+        description = "Maximum number of refactorings to generate (default: 5)"
+    )
+    private int maxRefactorings = 5;
 
     @Override
     public Integer call() {
@@ -90,28 +110,170 @@ public class RefactorCommand implements Callable<Integer> {
         }
     }
 
-    private int handleCodeFix(ConsolePrinter printer) throws InterruptedException {
-        // TODO: Phase 4 - Implement actual code fix generation
-        printer.spinner("Analyzing code patterns...", false);
-        Thread.sleep(1000);
-        printer.spinner("Analyzing code patterns", true);
+    private int handleCodeFix(ConsolePrinter printer) {
+        try {
+            // Validate sourcePath is a JSON report file
+            Path reportPath = Paths.get(sourcePath);
+            if (!Files.exists(reportPath)) {
+                printer.error("Report file does not exist: " + sourcePath);
+                printer.blank();
+                printer.info("Please run /analyze first with -o option to generate a report:");
+                printer.info("  harmony-agent analyze <path> -o report.html");
+                printer.info("This will generate both report.html and report.json");
+                return 1;
+            }
 
-        printer.blank();
-        printer.subheader("Suggested Fixes");
+            if (!Files.isRegularFile(reportPath)) {
+                printer.error("Not a regular file: " + sourcePath);
+                return 1;
+            }
 
-        printer.info("1. bzlib.c:234 - Replace strcpy with strncpy");
-        printer.info("2. bzlib.c:456 - Add memory cleanup in error path");
-        printer.info("3. bzlib.c:789 - Add null pointer check");
+            // Load scan result from JSON report
+            printer.blank();
+            printer.header("Loading Analysis Report");
+            printer.info("Report: " + sourcePath);
+            printer.blank();
 
-        printer.blank();
-        printer.warning("⚠️  Automatic code generation is in development");
-        printer.info("Currently showing suggestions only");
+            JsonReportWriter jsonReader = new JsonReportWriter();
+            ScanResult scanResult = jsonReader.read(reportPath);
 
-        if (outputDir != null) {
-            printer.info("Would write refactored code to: " + outputDir);
+            // Get all issues
+            List<SecurityIssue> issues = scanResult.getIssues();
+
+            if (issues.isEmpty()) {
+                printer.success("No issues found in the report!");
+                return 0;
+            }
+
+            printer.info("Found " + issues.size() + " issues");
+            printer.blank();
+
+            // If specific issue number requested, only process that one
+            if (issueNumber != null) {
+                if (issueNumber < 0 || issueNumber >= issues.size()) {
+                    printer.error("Invalid issue number: " + issueNumber);
+                    printer.info("Valid range: 0 to " + (issues.size() - 1));
+                    return 1;
+                }
+                issues = List.of(issues.get(issueNumber));
+                printer.info("Processing issue #" + issueNumber);
+                printer.blank();
+            } else {
+                // Limit to maxRefactorings
+                if (issues.size() > maxRefactorings) {
+                    printer.warning("Too many issues (" + issues.size() + "). Limiting to " + maxRefactorings);
+                    printer.info("Use -n <number> to refactor a specific issue");
+                    issues = issues.subList(0, maxRefactorings);
+                    printer.blank();
+                }
+            }
+
+            // Setup LLM provider
+            ConfigManager configManager = parent.getConfigManager();
+            String providerName = configManager.getConfig().getAi().getProvider();
+            String model = configManager.getConfig().getAi().getModel();
+
+            // Check for command-level configuration
+            AppConfig.CommandConfig commandConfig = configManager.getConfig().getAi().getCommands().get("refactor");
+            if (commandConfig != null) {
+                if (commandConfig.getProvider() != null) {
+                    providerName = commandConfig.getProvider();
+                }
+                if (commandConfig.getModel() != null) {
+                    model = commandConfig.getModel();
+                }
+            }
+
+            // Create LLMProvider
+            String openaiKey = System.getenv("OPENAI_API_KEY");
+            if (openaiKey == null || openaiKey.isEmpty()) {
+                openaiKey = configManager.getConfig().getAi().getApiKey();
+            }
+
+            String claudeKey = System.getenv("CLAUDE_API_KEY");
+            String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
+            ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
+
+            LLMProvider provider;
+            try {
+                provider = factory.getProvider(providerName);
+            } catch (IllegalArgumentException e) {
+                printer.error("LLM provider not configured: " + providerName);
+                printer.blank();
+                printer.info("Available providers: openai, claude, siliconflow");
+                printer.info("Please configure API keys (set OPENAI_API_KEY, CLAUDE_API_KEY, or SILICONFLOW_API_KEY)");
+                return 1;
+            }
+
+            if (!provider.isAvailable()) {
+                printer.error("LLM provider not available: " + providerName);
+                printer.blank();
+                printer.info("Please set API key environment variable");
+                return 1;
+            }
+
+            // Create SecuritySuggestionAdvisor
+            CodeSlicer codeSlicer = new CodeSlicer();
+            SecuritySuggestionAdvisor advisor = new SecuritySuggestionAdvisor(provider, codeSlicer, model);
+
+            printer.header("Code Refactoring Suggestions");
+            printer.info("Provider: " + provider.getProviderName());
+            printer.info("Model: " + model);
+            printer.info("Generating refactorings for " + issues.size() + " issues...");
+            printer.blank();
+
+            // Generate refactorings for each issue
+            int successCount = 0;
+            for (int i = 0; i < issues.size(); i++) {
+                SecurityIssue issue = issues.get(i);
+                int displayNumber = issueNumber != null ? issueNumber : i;
+
+                printer.subheader("Issue #" + displayNumber + ": " + issue.getTitle());
+                printer.keyValue("  Location", issue.getLocation().toString());
+                printer.keyValue("  Severity", issue.getSeverity().getDisplayName());
+                printer.keyValue("  Category", issue.getCategory().getDisplayName());
+                printer.blank();
+
+                // Generate refactoring
+                printer.spinner("Generating refactoring suggestion...", false);
+
+                Path sourceFilePath = Paths.get(scanResult.getSourcePath()).resolve(issue.getLocation().getFilePath());
+                String suggestion = advisor.getFixSuggestion(issue, sourceFilePath);
+
+                printer.spinner("Generating refactoring suggestion", true);
+                printer.blank();
+
+                // Output suggestion
+                if (suggestion.startsWith("❌")) {
+                    printer.error(suggestion);
+                } else {
+                    System.out.println(suggestion);
+                    successCount++;
+                }
+
+                printer.blank();
+                printer.info("─".repeat(80));
+                printer.blank();
+            }
+
+            printer.success("Generated " + successCount + " / " + issues.size() + " refactorings successfully");
+            printer.blank();
+            printer.info("💡 Tip: Use -n <number> to regenerate a specific refactoring");
+
+            if (outputDir != null) {
+                printer.warning("⚠️  Automatic code generation is in development");
+                printer.info("Would write refactored code to: " + outputDir);
+            }
+
+            return 0;
+
+        } catch (Exception e) {
+            printer.error("Refactoring failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+            return 1;
         }
-
-        return 0;
     }
 
     private int handleRustMigration(ConsolePrinter printer) {
