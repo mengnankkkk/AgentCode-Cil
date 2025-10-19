@@ -210,6 +210,7 @@ public class AppConfig {
         private String format = "html";
         private boolean verbose = true;
         private boolean color = true;
+        private int commandHistorySize = 10;  // Number of commands to keep in history
 
         // Getters and setters
         public String getFormat() { return format; }
@@ -220,6 +221,11 @@ public class AppConfig {
 
         public boolean isColor() { return color; }
         public void setColor(boolean color) { this.color = color; }
+
+        public int getCommandHistorySize() { return commandHistorySize; }
+        public void setCommandHistorySize(int commandHistorySize) {
+            this.commandHistorySize = commandHistorySize;
+        }
     }
 
     /**

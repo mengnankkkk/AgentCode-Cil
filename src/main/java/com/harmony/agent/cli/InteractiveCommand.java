@@ -113,11 +113,26 @@ public class InteractiveCommand implements Callable<Integer> {
             parser.setEofOnUnclosedQuote(true);
             parser.setEofOnEscapedNewLine(true);
 
+            // Configure command history
+            DefaultHistory history = new DefaultHistory();
+
+            // Set history file location (in user's home/.harmony-agent directory)
+            File historyFile = getHistoryFile();
+            history.attach(LineReaderBuilder.builder()
+                .terminal(terminal)
+                .build());
+
+            // Get history size from configuration (default: 10)
+            int historySize = configManager.getConfig().getOutput().getCommandHistorySize();
+
             lineReader = LineReaderBuilder.builder()
                 .terminal(terminal)
                 .completer(new CommandCompleter(() -> currentWorkingDirectory))
                 .parser(parser)
-                .history(new DefaultHistory())
+                .history(history)
+                .variable(LineReader.HISTORY_FILE, historyFile.toPath())
+                .variable(LineReader.HISTORY_SIZE, historySize)  // Keep last N commands
+                .variable(LineReader.HISTORY_FILE_SIZE, historySize)  // Max N entries in file
                 .option(LineReader.Option.CASE_INSENSITIVE, false)  // Keep case sensitive for system commands
                 .option(LineReader.Option.AUTO_GROUP, false)        // Disable auto grouping
                 .option(LineReader.Option.AUTO_MENU_LIST, true)     // Show menu list
@@ -184,6 +199,22 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
+     * Get history file location
+     * Creates ~/.harmony-agent/history if it doesn't exist
+     */
+    private File getHistoryFile() {
+        String userHome = System.getProperty("user.home");
+        File harmonyDir = new File(userHome, ".harmony-agent");
+
+        // Create directory if it doesn't exist
+        if (!harmonyDir.exists()) {
+            harmonyDir.mkdirs();
+        }
+
+        return new File(harmonyDir, "history");
+    }
+
+    /**
      * Setup custom key bindings
      */
     private void setupKeyBindings() {
@@ -226,6 +257,7 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.info("  • System commands: $ <command> - Execute shell commands");
         printer.info("  • Use commands: /analyze, /suggest, /help, /exit");
         printer.info("  • Chat naturally: Ask questions about security, code, etc.");
+        printer.info("  • Command history: ↑/↓ to navigate previous commands");
         printer.blank();
 
         // Show LLM architecture status
@@ -1126,6 +1158,7 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.info("  • Press Ctrl+C to cancel current input");
         printer.info("  • Press Ctrl+D to exit");
         printer.info("  • Use $ prefix for system commands (NEW!)");
+        printer.info("  • Use ↑ and ↓ arrow keys to navigate command history");
         printer.blank();
     }
 
