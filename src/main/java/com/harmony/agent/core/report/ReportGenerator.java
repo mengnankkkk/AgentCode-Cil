@@ -79,11 +79,28 @@ public class ReportGenerator {
         Map<String, Object> data = new HashMap<>();
 
         // Basic scan information with null safety
-        data.put("scanId", result.getScanId() != null ? result.getScanId() : "unknown");
+        String scanId = result.getScanId() != null ? result.getScanId() : "unknown";
+        data.put("scanId", scanId);
+        data.put("scanIdShort", scanId.length() >= 8 ? scanId.substring(0, 8) : scanId);
         data.put("sourcePath", result.getSourcePath() != null ? result.getSourcePath() : "N/A");
-        data.put("startTime", result.getStartTime() != null ? result.getStartTime() : java.time.Instant.now());
-        data.put("endTime", result.getEndTime() != null ? result.getEndTime() : java.time.Instant.now());
-        data.put("duration", result.getDuration() != null ? result.getDuration() : java.time.Duration.ZERO);
+
+        // Format timestamps as strings to avoid Freemarker method calls
+        java.time.Instant startTime = result.getStartTime() != null ? result.getStartTime() : java.time.Instant.now();
+        java.time.Instant endTime = result.getEndTime() != null ? result.getEndTime() : java.time.Instant.now();
+        java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm:ss")
+            .withZone(java.time.ZoneId.systemDefault());
+
+        data.put("startTime", startTime);
+        data.put("endTime", endTime);
+        data.put("startTimeFormatted", formatter.format(startTime));
+        data.put("endTimeFormatted", formatter.format(endTime));
+
+        // Convert Duration to seconds for Freemarker (avoid calling Java methods in template)
+        java.time.Duration duration = result.getDuration() != null ? result.getDuration() : java.time.Duration.ZERO;
+        data.put("duration", duration);
+        data.put("durationSeconds", duration.toSeconds());
+        data.put("durationFormatted", formatDuration(duration));
 
         // Issues - Convert all counts to Long for Freemarker type consistency
         data.put("issues", result.getIssues());
@@ -128,6 +145,28 @@ public class ReportGenerator {
             : 0L;
         data.put("aiFilteredCount", Long.valueOf(aiFilteredCount));
 
+        // Calculate AI validation percentage safely (avoid division by zero)
+        long totalProcessed = result.getTotalIssueCount() + aiFilteredCount;
+        double aiValidationPercentage = totalProcessed > 0
+            ? (aiValidatedCount * 100.0 / totalProcessed)
+            : 0.0;
+        data.put("aiValidationPercentage", aiValidationPercentage);
+
         return data;
+    }
+
+    /**
+     * Format duration in human-readable format
+     */
+    private String formatDuration(java.time.Duration duration) {
+        long seconds = duration.toSeconds();
+        long minutes = seconds / 60;
+        long secs = seconds % 60;
+
+        if (minutes > 0) {
+            return String.format("%dm %ds", minutes, secs);
+        } else {
+            return String.format("%ds", secs);
+        }
     }
 }

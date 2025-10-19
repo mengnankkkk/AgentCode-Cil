@@ -21,7 +21,16 @@
       "Bash(java:*)",
       "Bash(del \"E:/github/HarmonySafeAgent/target/classes/com/harmony/agent/core/report/ReportGenerator.class\")",
       "Bash(del \"E:\\github\\HarmonySafeAgent\\target\\classes\\com\\harmony\\agent\\core\\report\\ReportGenerator.class\")",
-      "Bash(del:*)"
+      "Bash(del:*)",
+      "Read(//c/Users/ikeife/**)",
+      "Bash(cat:*)",
+      "Bash(jar tf:*)",
+      "Bash(jar xf:*)",
+      "Bash(javap:*)",
+      "Bash(python /tmp/fix_template.py:*)",
+      "Bash(python /tmp/fix_ai_percentage.py:*)",
+      "Bash(python /tmp/fix_endtime.py:*)",
+      "Read(//tmp/**)"
     ],
     "deny": [],
     "ask": []

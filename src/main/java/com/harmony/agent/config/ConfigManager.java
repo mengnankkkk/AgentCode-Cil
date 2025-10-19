@@ -82,24 +82,50 @@ public class ConfigManager {
     private void loadConfiguration() {
         config = new AppConfig();
 
-        // Load from YAML file
-        if (Files.exists(configFile)) {
-            try (InputStream input = Files.newInputStream(configFile)) {
-                Yaml yaml = new Yaml();
-                Map<String, Map<String, Object>> loadedConfig = yaml.load(input);
+        InputStream input = null;
+        String configSource = null;
 
-                if (loadedConfig != null) {
-                    // Load AI config
-                    Map<String, Object> aiMap = loadedConfig.get("ai");
-                    if (aiMap != null) {
-                        if (aiMap.containsKey("provider")) config.getAi().setProvider((String) aiMap.get("provider"));
-                        if (aiMap.containsKey("model")) config.getAi().setModel((String) aiMap.get("model"));
-                        if (aiMap.containsKey("max_tokens")) config.getAi().setMaxTokens(((Number) aiMap.get("max_tokens")).intValue());
-                        if (aiMap.containsKey("temperature")) config.getAi().setTemperature(((Number) aiMap.get("temperature")).doubleValue());
-                        if (aiMap.containsKey("base_url")) config.getAi().setBaseUrl((String) aiMap.get("base_url"));
+        try {
+            // Priority 1: Load from classpath (application.yml in resources) - PROJECT CONFIG
+            input = getClass().getClassLoader().getResourceAsStream("application.yml");
+            if (input != null) {
+                configSource = "classpath:application.yml";
+                logger.info("Loading configuration from: {}", configSource);
+            }
+            // Priority 2: Load from user config file (~/.harmony-agent/config.yml) - USER OVERRIDE
+            else if (Files.exists(configFile)) {
+                input = Files.newInputStream(configFile);
+                configSource = configFile.toString();
+                logger.info("Loading configuration from: {}", configSource);
+            }
+            else {
+                logger.warn("No configuration file found, using defaults");
+                return;
+            }
 
-                        // Load providers configuration
-                        if (aiMap.containsKey("providers")) {
+            // Load from YAML
+            Yaml yaml = new Yaml();
+            Map<String, Map<String, Object>> loadedConfig = yaml.load(input);
+
+            if (loadedConfig != null) {
+                // Load AI config
+                Map<String, Object> aiMap = loadedConfig.get("ai");
+                if (aiMap != null) {
+                    if (aiMap.containsKey("provider")) config.getAi().setProvider((String) aiMap.get("provider"));
+                    if (aiMap.containsKey("model")) config.getAi().setModel((String) aiMap.get("model"));
+                    if (aiMap.containsKey("max_tokens")) config.getAi().setMaxTokens(((Number) aiMap.get("max_tokens")).intValue());
+                    if (aiMap.containsKey("temperature")) config.getAi().setTemperature(((Number) aiMap.get("temperature")).doubleValue());
+                    if (aiMap.containsKey("base_url")) config.getAi().setBaseUrl((String) aiMap.get("base_url"));
+
+                    // Load rate limiting configuration
+                    if (aiMap.containsKey("rate_limit_mode")) config.getAi().setRateLimitMode((String) aiMap.get("rate_limit_mode"));
+                    if (aiMap.containsKey("requests_per_second_limit")) config.getAi().setRequestsPerSecondLimit(((Number) aiMap.get("requests_per_second_limit")).doubleValue());
+                    if (aiMap.containsKey("tokens_per_minute_limit")) config.getAi().setTokensPerMinuteLimit(((Number) aiMap.get("tokens_per_minute_limit")).intValue());
+                    if (aiMap.containsKey("safety_margin")) config.getAi().setSafetyMargin(((Number) aiMap.get("safety_margin")).doubleValue());
+                    if (aiMap.containsKey("validation_concurrency")) config.getAi().setValidationConcurrency(((Number) aiMap.get("validation_concurrency")).intValue());
+
+                    // Load providers configuration
+                    if (aiMap.containsKey("providers")) {
                             Map<String, Map<String, Object>> providersMap = (Map<String, Map<String, Object>>) aiMap.get("providers");
                             for (Map.Entry<String, Map<String, Object>> entry : providersMap.entrySet()) {
                                 String providerName = entry.getKey();
@@ -120,8 +146,8 @@ public class ConfigManager {
                             }
                         }
 
-                        // Load roles configuration
-                        if (aiMap.containsKey("roles")) {
+                    // Load roles configuration
+                    if (aiMap.containsKey("roles")) {
                             Map<String, Map<String, Object>> rolesMap = (Map<String, Map<String, Object>>) aiMap.get("roles");
                             for (Map.Entry<String, Map<String, Object>> entry : rolesMap.entrySet()) {
                                 String roleName = entry.getKey();
@@ -145,8 +171,8 @@ public class ConfigManager {
                             }
                         }
 
-                        // Load commands configuration
-                        if (aiMap.containsKey("commands")) {
+                    // Load commands configuration
+                    if (aiMap.containsKey("commands")) {
                             Map<String, Map<String, Object>> commandsMap = (Map<String, Map<String, Object>>) aiMap.get("commands");
                             for (Map.Entry<String, Map<String, Object>> entry : commandsMap.entrySet()) {
                                 String commandName = entry.getKey();
@@ -205,14 +231,21 @@ public class ConfigManager {
                         if (cacheMap.containsKey("max_size")) config.getCache().setMaxSize(((Number) cacheMap.get("max_size")).intValue());
                     }
 
-                    logger.info("Configuration loaded from: {}", configFile);
-                }
-            } catch (IOException e) {
-                logger.error("Failed to load configuration", e);
+                logger.info("Configuration loaded successfully from: {}", configSource);
             }
-        } else {
-            logger.info("Configuration file not found, using defaults");
-            saveConfiguration();
+        } catch (IOException e) {
+            logger.error("Failed to load configuration from: {}", configSource, e);
+        } catch (Exception e) {
+            logger.error("Failed to initialize configuration", e);
+        } finally {
+            // Close input stream
+            if (input != null) {
+                try {
+                    input.close();
+                } catch (IOException e) {
+                    // Ignore
+                }
+            }
         }
 
         // Load API key from secure storage
