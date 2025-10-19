@@ -402,7 +402,7 @@
                 </div>
                 <div class="meta-item">
                     <span>📅</span>
-                    <span><strong>Completed:</strong> ${endTime?string["yyyy-MM-dd HH:mm:ss"]}</span>
+                    <span><strong>Completed:</strong> ${endTime?string("yyyy-MM-dd HH:mm:ss")}</span>
                 </div>
             </div>
         </div>
@@ -531,7 +531,7 @@
                         <!-- Code Context (if available) -->
                         <#if issue.metadata['code_context']??>
                             <div class="code-block">
-                                <code>${issue.metadata['code_context']?html}</code>
+                                <code>${issue.metadata['code_context']}</code>
                             </div>
                         </#if>
                     </div>

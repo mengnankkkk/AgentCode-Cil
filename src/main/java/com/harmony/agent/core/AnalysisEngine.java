@@ -48,8 +48,8 @@ public class AnalysisEngine {
         int threadCount = config.isParallel() ? config.getMaxThreads() : 1;
         this.executorService = Executors.newFixedThreadPool(threadCount);
 
-        // Initialize AI decision engine
-        this.decisionEngine = new DecisionEngine(ConfigManager.getInstance());
+        // Initialize AI decision engine (pass ExecutorService for parallel validation)
+        this.decisionEngine = new DecisionEngine(ConfigManager.getInstance(), this.executorService);
         this.aiEnhancementEnabled = config.isAiEnhancementEnabled() &&
                                     decisionEngine.isAvailable();
 
@@ -284,15 +284,15 @@ public class AnalysisEngine {
         List<SecurityIssue> allIssues = new ArrayList<>();
 
         for (Analyzer analyzer : selectedAnalyzers) {
-            logger.info("Running analyzer: {}", analyzer.getName());
+            logger.info("Running analyzer: {} (batch mode)", analyzer.getName());
 
-            for (Path file : files) {
-                try {
-                    List<SecurityIssue> issues = analyzer.analyze(file);
-                    allIssues.addAll(issues);
-                } catch (AnalyzerException e) {
-                    logger.error("Analysis failed for {}: {}", file, e.getMessage());
-                }
+            try {
+                // Use batch analysis method for efficiency
+                List<SecurityIssue> issues = analyzer.analyzeAll(files);
+                allIssues.addAll(issues);
+                logger.info("{} found {} issues", analyzer.getName(), issues.size());
+            } catch (AnalyzerException e) {
+                logger.error("Batch analysis failed for {}: {}", analyzer.getName(), e.getMessage());
             }
         }
 
@@ -305,20 +305,20 @@ public class AnalysisEngine {
     private List<SecurityIssue> analyzeParallel(List<Path> files, List<Analyzer> selectedAnalyzers) {
         List<Future<List<SecurityIssue>>> futures = new ArrayList<>();
 
-        // Submit analysis tasks for each analyzer
+        // Submit analysis tasks for each analyzer (each analyzer runs in parallel)
         for (Analyzer analyzer : selectedAnalyzers) {
-            logger.info("Running analyzer in parallel: {}", analyzer.getName());
+            logger.info("Running analyzer in parallel: {} (batch mode)", analyzer.getName());
 
             Future<List<SecurityIssue>> future = executorService.submit(() -> {
-                List<SecurityIssue> issues = new ArrayList<>();
-                for (Path file : files) {
-                    try {
-                        issues.addAll(analyzer.analyze(file));
-                    } catch (AnalyzerException e) {
-                        logger.error("Analysis failed for {}: {}", file, e.getMessage());
-                    }
+                try {
+                    // Use batch analysis method for efficiency
+                    List<SecurityIssue> issues = analyzer.analyzeAll(files);
+                    logger.info("{} found {} issues", analyzer.getName(), issues.size());
+                    return issues;
+                } catch (AnalyzerException e) {
+                    logger.error("Batch analysis failed for {}: {}", analyzer.getName(), e.getMessage());
+                    return new ArrayList<>();
                 }
-                return issues;
             });
 
             futures.add(future);

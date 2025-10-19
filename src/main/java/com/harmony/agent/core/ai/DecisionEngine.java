@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 /**
@@ -25,6 +26,8 @@ public class DecisionEngine {
     private final CachedAiValidationClient aiClient;
     private final CodeSlicer codeSlicer;
     private final Gson gson;
+    private final ExecutorService executorService; // For parallel AI validation
+    private final int validationConcurrency; // Max concurrent validations
 
     // Baseline confidence scores for each analyzer
     private static final double CLANG_BASELINE_CONFIDENCE = 0.90;
@@ -36,64 +39,121 @@ public class DecisionEngine {
     /**
      * Constructor
      */
-    public DecisionEngine(ConfigManager configManager) {
+    public DecisionEngine(ConfigManager configManager, ExecutorService executorService) {
         this.codeSlicer = new CodeSlicer();
         this.aiClient = new CachedAiValidationClient(
             new AiValidationClient(configManager)
         );
         this.gson = new Gson();
+        this.executorService = executorService;
+        this.validationConcurrency = configManager.getConfig().getAi().getValidationConcurrency();
 
-        logger.info("Decision Engine initialized with AI provider: {}",
-            aiClient.getProviderName());
+        logger.info("Decision Engine initialized with AI provider: {}, concurrency: {}",
+            aiClient.getProviderName(), validationConcurrency);
     }
 
     /**
      * Constructor with custom client (for testing)
      */
-    public DecisionEngine(CachedAiValidationClient aiClient, CodeSlicer codeSlicer) {
+    public DecisionEngine(CachedAiValidationClient aiClient, CodeSlicer codeSlicer,
+                         ExecutorService executorService, int validationConcurrency) {
         this.aiClient = aiClient;
         this.codeSlicer = codeSlicer;
         this.gson = new Gson();
+        this.executorService = executorService;
+        this.validationConcurrency = validationConcurrency;
     }
 
     /**
-     * Enhance security issues with AI validation
+     * Enhance security issues with AI validation (Parallel version)
      *
      * @param staticIssues Issues from static analyzers
      * @return Enhanced issues list (false positives filtered out)
      */
     public List<SecurityIssue> enhanceIssues(List<SecurityIssue> staticIssues) {
-        logger.info("Starting AI enhancement for {} issues", staticIssues.size());
+        logger.info("Starting parallel AI enhancement for {} issues (concurrency: {})",
+            staticIssues.size(), validationConcurrency);
 
         List<SecurityIssue> enhancedIssues = new ArrayList<>();
-        int validated = 0;
-        int filtered = 0;
-        int errors = 0;
+        List<Callable<SecurityIssue>> validationTasks = new ArrayList<>();
+        List<SecurityIssue> noValidationNeeded = new ArrayList<>();
 
+        // Separate issues into those needing validation and those that don't
         for (SecurityIssue issue : staticIssues) {
             if (needsAiValidation(issue)) {
-                try {
-                    SecurityIssue enhanced = validateWithAi(issue);
-                    if (enhanced != null) {
-                        enhancedIssues.add(enhanced);
-                        validated++;
-                    } else {
-                        filtered++;
-                        logger.info("AI filtered false positive: {}", issue.getTitle());
-                    }
-                } catch (Exception e) {
-                    logger.error("AI validation failed for issue: {}", issue.getId(), e);
-                    enhancedIssues.add(createFallbackIssue(issue));
-                    errors++;
-                }
+                validationTasks.add(new AiValidationTask(issue));
             } else {
                 // High-confidence analyzer (Clang-Tidy), skip AI validation
-                enhancedIssues.add(createHighConfidenceIssue(issue));
+                noValidationNeeded.add(createHighConfidenceIssue(issue));
             }
         }
 
-        logger.info("AI enhancement complete: {} validated, {} filtered, {} errors, {} total output",
-            validated, filtered, errors, enhancedIssues.size());
+        logger.info("Submitting {} issues for parallel AI validation, {} skipped",
+            validationTasks.size(), noValidationNeeded.size());
+
+        // Process validation tasks in parallel using a bounded thread pool
+        if (!validationTasks.isEmpty()) {
+            // Create a dedicated validation pool with limited concurrency
+            int poolSize = Math.min(validationConcurrency, validationTasks.size());
+            ExecutorService validationPool = Executors.newFixedThreadPool(poolSize);
+
+            try {
+                // Submit all tasks and get futures
+                List<Future<SecurityIssue>> futures = new ArrayList<>();
+                for (Callable<SecurityIssue> task : validationTasks) {
+                    futures.add(validationPool.submit(task));
+                }
+
+                // Collect results
+                int validated = 0;
+                int filtered = 0;
+                int errors = 0;
+
+                for (Future<SecurityIssue> future : futures) {
+                    try {
+                        SecurityIssue result = future.get(); // May block
+                        if (result != null) {
+                            enhancedIssues.add(result);
+
+                            // Check if it was filtered
+                            Object aiFiltered = result.getMetadata().get("ai_filtered");
+                            if (aiFiltered != null && (Boolean) aiFiltered) {
+                                filtered++;
+                            } else {
+                                validated++;
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        logger.error("Interrupted while waiting for AI validation result", e);
+                        errors++;
+                    } catch (ExecutionException e) {
+                        logger.error("AI validation task failed", e.getCause());
+                        errors++;
+                    }
+                }
+
+                logger.info("AI enhancement complete: {} validated, {} filtered, {} errors",
+                    validated, filtered, errors);
+
+            } finally {
+                // Shutdown validation pool
+                validationPool.shutdown();
+                try {
+                    if (!validationPool.awaitTermination(10, TimeUnit.SECONDS)) {
+                        validationPool.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
+                    validationPool.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+
+        // Add issues that didn't need validation
+        enhancedIssues.addAll(noValidationNeeded);
+
+        logger.info("Total output issues: {}", enhancedIssues.size());
 
         // Log cache statistics
         logCacheStats();
@@ -290,6 +350,69 @@ public class DecisionEngine {
     public void clearCache() {
         aiClient.clearCache();
         codeSlicer.clearCache();
+    }
+
+    /**
+     * Create issue marked as filtered by AI
+     */
+    private SecurityIssue markAsFiltered(SecurityIssue original, String reason) {
+        return new SecurityIssue.Builder()
+            .id(original.getId())
+            .title(original.getTitle() + " [AI FILTERED]")
+            .description(original.getDescription())
+            .severity(IssueSeverity.INFO) // Downgrade severity for filtered issues
+            .category(original.getCategory())
+            .location(original.getLocation())
+            .analyzer(original.getAnalyzer() + " + AI")
+            .metadata(original.getMetadata())
+            .metadata("ai_validated", true)
+            .metadata("ai_filtered", true)
+            .metadata("filter_reason", reason)
+            .build();
+    }
+
+    /**
+     * Callable task for parallel AI validation
+     */
+    private class AiValidationTask implements java.util.concurrent.Callable<SecurityIssue> {
+        private final SecurityIssue originalIssue;
+
+        public AiValidationTask(SecurityIssue issue) {
+            this.originalIssue = issue;
+        }
+
+        @Override
+        public SecurityIssue call() {
+            try {
+                // Get code context
+                Path filePath = Paths.get(originalIssue.getLocation().getFilePath());
+                int lineNumber = originalIssue.getLocation().getLineNumber();
+
+                String codeSlice = codeSlicer.getContextSlice(filePath, lineNumber);
+
+                // Build validation prompt
+                String prompt = PromptBuilder.buildIssueValidationPrompt(originalIssue, codeSlice);
+
+                // Send to AI (rate-limited)
+                String jsonResponse = aiClient.sendRequest(prompt, true);
+
+                // Parse response
+                AiValidationResponse validation = parseValidationResponse(jsonResponse);
+
+                if (validation.is_vulnerability) {
+                    // AI confirmed - create enhanced issue
+                    return createEnhancedIssue(originalIssue, validation);
+                } else {
+                    // AI marked as false positive - return marked issue (not null)
+                    logger.info("AI filtered false positive: {}", originalIssue.getTitle());
+                    return markAsFiltered(originalIssue, validation.reason);
+                }
+            } catch (Exception e) {
+                // AI validation failed - return fallback issue
+                logger.error("AI validation failed for issue: {}", originalIssue.getId(), e);
+                return createFallbackIssue(originalIssue);
+            }
+        }
     }
 
     /**

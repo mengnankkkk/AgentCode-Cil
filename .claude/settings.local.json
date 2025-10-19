@@ -17,7 +17,11 @@
       "Bash(timeout 60 java:*)",
       "Bash(tasklist:*)",
       "Bash(findstr:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(java:*)",
+      "Bash(del \"E:/github/HarmonySafeAgent/target/classes/com/harmony/agent/core/report/ReportGenerator.class\")",
+      "Bash(del \"E:\\github\\HarmonySafeAgent\\target\\classes\\com\\harmony\\agent\\core\\report\\ReportGenerator.class\")",
+      "Bash(del:*)"
     ],
     "deny": [],
     "ask": []

@@ -43,6 +43,9 @@ public class LLMClient {
             this.useRealLLM = isAvailable();
             if (useRealLLM) {
                 logger.info("LLMClient initialized with real LLM providers");
+
+                // Configure rate limiter
+                configureRateLimiter();
             } else {
                 logger.warn("LLMClient initialized in fallback mode (no API keys configured)");
             }
@@ -50,6 +53,26 @@ public class LLMClient {
             logger.error("Failed to initialize LLM orchestrator", e);
             throw new RuntimeException("Failed to initialize LLM client", e);
         }
+    }
+
+    /**
+     * Configure rate limiter based on application configuration
+     */
+    private void configureRateLimiter() {
+        AppConfig.AiConfig aiConfig = configManager.getConfig().getAi();
+
+        String mode = aiConfig.getRateLimitMode();
+        double qpsLimit = aiConfig.getRequestsPerSecondLimit();
+        int tpmLimit = aiConfig.getTokensPerMinuteLimit();
+        double safetyMargin = aiConfig.getSafetyMargin();
+
+        // Configure the rate limiter in BaseLLMProvider
+        com.harmony.agent.llm.provider.BaseLLMProvider.configureRateLimiter(
+            mode, qpsLimit, tpmLimit, safetyMargin
+        );
+
+        logger.info("Rate limiter configured: mode={}, qpsLimit={}, tpmLimit={}, safetyMargin={}",
+            mode, qpsLimit, tpmLimit, safetyMargin);
     }
 
     /**

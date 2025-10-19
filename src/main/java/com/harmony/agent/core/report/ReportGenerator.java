@@ -78,42 +78,55 @@ public class ReportGenerator {
     private Map<String, Object> createDataModel(ScanResult result) {
         Map<String, Object> data = new HashMap<>();
 
-        // Basic scan information
-        data.put("scanId", result.getScanId());
-        data.put("sourcePath", result.getSourcePath());
-        data.put("startTime", result.getStartTime());
-        data.put("endTime", result.getEndTime());
-        data.put("duration", result.getDuration());
+        // Basic scan information with null safety
+        data.put("scanId", result.getScanId() != null ? result.getScanId() : "unknown");
+        data.put("sourcePath", result.getSourcePath() != null ? result.getSourcePath() : "N/A");
+        data.put("startTime", result.getStartTime() != null ? result.getStartTime() : java.time.Instant.now());
+        data.put("endTime", result.getEndTime() != null ? result.getEndTime() : java.time.Instant.now());
+        data.put("duration", result.getDuration() != null ? result.getDuration() : java.time.Duration.ZERO);
 
-        // Issues
+        // Issues - Convert all counts to Long for Freemarker type consistency
         data.put("issues", result.getIssues());
-        data.put("totalIssues", result.getTotalIssueCount());
+        data.put("totalIssues", Long.valueOf(result.getTotalIssueCount()));
 
         // Statistics
         data.put("statistics", result.getStatistics());
         data.put("analyzersUsed", result.getAnalyzersUsed());
 
-        // Severity breakdown
-        data.put("severityCounts", result.getIssueCountBySeverity());
-        data.put("categoryCounts", result.getIssueCountByCategory());
+        // CRITICAL FIX: Convert enum keys to String keys for template compatibility
+        // Freemarker cannot match enum objects with string literals like 'CRITICAL'
+        Map<String, Long> severityCountsStringKey = new HashMap<>();
+        result.getIssueCountBySeverity().forEach((severity, count) -> {
+            severityCountsStringKey.put(severity.name(), count);
+        });
+        data.put("severityCounts", severityCountsStringKey);
+
+        Map<String, Long> categoryCountsStringKey = new HashMap<>();
+        result.getIssueCountByCategory().forEach((category, count) -> {
+            categoryCountsStringKey.put(category.name(), count);
+        });
+        data.put("categoryCounts", categoryCountsStringKey);
 
         // Critical issues
         data.put("hasCriticalIssues", result.hasCriticalIssues());
         data.put("criticalIssues", result.getIssuesBySeverity(
             com.harmony.agent.core.model.IssueSeverity.CRITICAL));
 
-        // AI enhancement status
+        // AI enhancement status - Ensure Long type for arithmetic operations in template
         long aiValidatedCount = result.getIssues().stream()
             .filter(issue -> {
                 Object validated = issue.getMetadata().get("ai_validated");
                 return validated != null && validated.equals(true);
             })
             .count();
-        data.put("aiValidatedCount", aiValidatedCount);
+        data.put("aiValidatedCount", Long.valueOf(aiValidatedCount));
 
-        // Calculate AI filtering stats
-        long aiFilteredCount = (long) result.getStatistics().getOrDefault("ai_filtered_count", 0L);
-        data.put("aiFilteredCount", aiFilteredCount);
+        // Calculate AI filtering stats - Safe type conversion for Integer/Long compatibility
+        Object aiFilteredValue = result.getStatistics().getOrDefault("ai_filtered_count", 0L);
+        long aiFilteredCount = (aiFilteredValue instanceof Number)
+            ? ((Number) aiFilteredValue).longValue()
+            : 0L;
+        data.put("aiFilteredCount", Long.valueOf(aiFilteredCount));
 
         return data;
     }

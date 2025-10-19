@@ -25,6 +25,13 @@ public class AppConfig {
         private double temperature = 0.3;
         private String baseUrl = "https://api.openai.com/v1";
 
+        // Rate limiting configuration
+        private String rateLimitMode = "qps"; // "qps" (queries per second) or "tpm" (tokens per minute)
+        private double requestsPerSecondLimit = 5.0; // QPS mode: max requests per second
+        private int tokensPerMinuteLimit = 60000; // TPM mode: max tokens per minute
+        private double safetyMargin = 0.8; // Safety margin (0.8 = 80% of limit)
+        private int validationConcurrency = 3; // Default: max 3 concurrent validations
+
         // Multiple providers configuration
         private Map<String, ProviderConfig> providers = new HashMap<>();
 
@@ -52,6 +59,27 @@ public class AppConfig {
 
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+
+        public String getRateLimitMode() { return rateLimitMode; }
+        public void setRateLimitMode(String rateLimitMode) { this.rateLimitMode = rateLimitMode; }
+
+        public double getRequestsPerSecondLimit() { return requestsPerSecondLimit; }
+        public void setRequestsPerSecondLimit(double requestsPerSecondLimit) {
+            this.requestsPerSecondLimit = requestsPerSecondLimit;
+        }
+
+        public int getTokensPerMinuteLimit() { return tokensPerMinuteLimit; }
+        public void setTokensPerMinuteLimit(int tokensPerMinuteLimit) {
+            this.tokensPerMinuteLimit = tokensPerMinuteLimit;
+        }
+
+        public double getSafetyMargin() { return safetyMargin; }
+        public void setSafetyMargin(double safetyMargin) { this.safetyMargin = safetyMargin; }
+
+        public int getValidationConcurrency() { return validationConcurrency; }
+        public void setValidationConcurrency(int validationConcurrency) {
+            this.validationConcurrency = validationConcurrency;
+        }
 
         public Map<String, ProviderConfig> getProviders() { return providers; }
         public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }

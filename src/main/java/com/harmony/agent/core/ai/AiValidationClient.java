@@ -1,5 +1,6 @@
 package com.harmony.agent.core.ai;
 
+import com.google.common.util.concurrent.RateLimiter;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.llm.model.LLMRequest;
 import com.harmony.agent.llm.model.LLMResponse;
@@ -27,6 +28,7 @@ public class AiValidationClient {
     private final LLMProvider provider;
     private final String model;
     private final ConfigManager configManager;
+    private final RateLimiter rateLimiter; // Client-side rate limiting
 
     /**
      * Constructor with default configuration
@@ -65,6 +67,14 @@ public class AiValidationClient {
         this.provider = factory.getProvider(providerName);
         this.model = configManager.getConfig().getAi().getModel();
 
+        // Initialize rate limiter from configuration
+        double requestsPerSecond = configManager.getConfig().getAi().getRequestsPerSecondLimit();
+        if (requestsPerSecond <= 0) {
+            requestsPerSecond = 5.0; // Fallback default
+        }
+        this.rateLimiter = RateLimiter.create(requestsPerSecond);
+        logger.info("Rate limiter initialized: {} requests/second", requestsPerSecond);
+
         if (!provider.isAvailable()) {
             logger.warn("LLM provider '{}' is not available - check API keys", providerName);
         } else {
@@ -80,6 +90,13 @@ public class AiValidationClient {
         this.provider = provider;
         this.model = model;
         this.configManager = configManager;
+
+        // Initialize rate limiter from configuration
+        double requestsPerSecond = configManager.getConfig().getAi().getRequestsPerSecondLimit();
+        if (requestsPerSecond <= 0) {
+            requestsPerSecond = 5.0; // Fallback default
+        }
+        this.rateLimiter = RateLimiter.create(requestsPerSecond);
     }
 
     /**
@@ -94,6 +111,11 @@ public class AiValidationClient {
         if (!provider.isAvailable()) {
             throw new AiClientException("LLM provider is not available - check API keys");
         }
+
+        // Acquire rate limiter permit (blocks until available)
+        logger.debug("Acquiring rate limit permit...");
+        rateLimiter.acquire();
+        logger.debug("Rate limit permit acquired");
 
         IOException lastException = null;
 
