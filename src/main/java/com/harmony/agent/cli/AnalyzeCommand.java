@@ -2,16 +2,24 @@ package com.harmony.agent.cli;
 
 import com.harmony.agent.config.AppConfig;
 import com.harmony.agent.config.ConfigManager;
+import com.harmony.agent.autofix.AutoFixOrchestrator;
+import com.harmony.agent.autofix.ChangeManager;
+import com.harmony.agent.autofix.CodeValidator;
 import com.harmony.agent.core.AnalysisEngine;
 import com.harmony.agent.core.model.IssueCategory;
 import com.harmony.agent.core.model.IssueSeverity;
 import com.harmony.agent.core.model.ScanResult;
 import com.harmony.agent.core.model.SecurityIssue;
+import com.harmony.agent.llm.LLMClient;
+import com.harmony.agent.tools.ToolExecutor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -29,6 +37,8 @@ import java.util.stream.Collectors;
     mixinStandardHelpOptions = true
 )
 public class AnalyzeCommand implements Callable<Integer> {
+
+    private static final Logger logger = LoggerFactory.getLogger(AnalyzeCommand.class);
 
     @ParentCommand
     private HarmonyAgentCLI parent;
@@ -73,6 +83,16 @@ public class AnalyzeCommand implements Callable<Integer> {
     public Integer call() {
         ConsolePrinter printer = parent.getPrinter();
         ConfigManager configManager = parent.getConfigManager();
+
+        // Initialize components for auto-fix menu
+        LLMClient llmClient = null;
+        ToolExecutor toolExecutor = null;
+        try {
+            llmClient = new LLMClient(configManager);
+            toolExecutor = new ToolExecutor(new File(System.getProperty("user.dir")));
+        } catch (Exception e) {
+            // Auto-fix features won't be available
+        }
 
         try {
             // Validate source path
@@ -264,6 +284,11 @@ public class AnalyzeCommand implements Callable<Integer> {
                     printer.info("Use -o/--output option to generate an HTML report");
                 }
 
+                // Show "Active Advisor" menu if there are critical issues
+                if (result.hasCriticalIssues()) {
+                    showActiveAdvisorMenu(result);
+                }
+
                 return result.hasCriticalIssues() ? 2 : 0;
 
             } finally {
@@ -276,6 +301,35 @@ public class AnalyzeCommand implements Callable<Integer> {
                 e.printStackTrace();
             }
             return 1;
+        }
+    }
+
+    /**
+     * Show "Active Advisor" menu after analysis
+     * Offers choices: Auto-Fix | Rust Migration | Later
+     */
+    private void showActiveAdvisorMenu(ScanResult result) {
+        ConsolePrinter printer = parent.getPrinter();
+        ConfigManager configManager = parent.getConfigManager();
+
+        try {
+            // Initialize components
+            LLMClient llmClient = new LLMClient(configManager);
+            File workDir = new File(System.getProperty("user.dir"));
+            ToolExecutor toolExecutor = new ToolExecutor(workDir);
+            CodeValidator codeValidator = new CodeValidator(toolExecutor, workDir);
+            AutoFixOrchestrator autoFixOrchestrator = new AutoFixOrchestrator(llmClient, codeValidator);
+            ChangeManager changeManager = new ChangeManager();
+
+            // Create and show menu
+            AnalysisMenu menu = new AnalysisMenu(printer, result, configManager,
+                autoFixOrchestrator, changeManager);
+
+            menu.showAndHandle();
+
+        } catch (Exception e) {
+            // Menu initialization failed - just skip the menu
+            logger.debug("Failed to show Active Advisor menu: " + e.getMessage(), e);
         }
     }
 }

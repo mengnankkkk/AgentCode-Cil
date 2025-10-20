@@ -23,7 +23,8 @@ import java.util.concurrent.Callable;
         SuggestCommand.class,
         RefactorCommand.class,
         ReportCommand.class,
-        ConfigCommand.class
+        ConfigCommand.class,
+        CacheStatsCommand.class  // ✨ P1 Optimization: Cache statistics
     }
 )
 public class HarmonyAgentCLI implements Callable<Integer> {

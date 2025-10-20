@@ -2,21 +2,37 @@
 # Copy this file to ~/.harmony-agent/config.yml and customize
 
 ai:
-  provider: openai  # openai | deepseek | claude
-  api_key: ${OPENAI_API_KEY}  # Use environment variable or set directly
-  model: gpt-4-turbo
+  provider: siliconflow  # openai | deepseek | claude | siliconflow
+  api_key: ${SILICONFLOW_API_KEY}  # Use environment variable or set directly
+  model: Qwen/Qwen2.5-14B-Instruct
   max_tokens: 4096
   temperature: 0.3
-  base_url: https://api.openai.com/v1
+  base_url: https://api.siliconflow.cn/v1
+
+  # Rate Limiting Configuration
+  # Two modes: "qps" (Queries Per Second) or "tpm" (Tokens Per Minute)
+  rate_limit_mode: qps  # "qps" for simple request limiting, "tpm" for token-based limiting
+
+  # QPS Mode Configuration (simple and recommended for most use cases)
+  requests_per_second_limit: 5.0  # Max API requests per second (↑ optimized from 2.0)
+
+  # TPM Mode Configuration (more precise but requires token estimation)
+  tokens_per_minute_limit: 60000  # Max tokens per minute (e.g., 60000 for OpenAI Tier 1)
+
+  # Safety Margin (applies to both modes)
+  safety_margin: 0.8  # Use 80% of the limit to handle fluctuations (↑ optimized from 0.6)
+
+  # Concurrency Control
+  validation_concurrency: 4  # Max concurrent AI validations in DecisionEngine (↑ optimized from 1)
 
   # Multiple Provider Support (Phase 3)
   providers:
     openai:
-      api_key: ${OPENAI_API_KEY}
-      base_url: https://api.openai.com/v1
+      api_key: sk-QrVG8lxmZUvhp0UZS3cqkujFJF25ux4QUzN1DmKk0RGjsQln
+      base_url: https://api.kkyyxx.xyz
       models:
         fast: gpt-3.5-turbo
-        standard: gpt-4-turbo
+        standard: gpt-4o
         premium: gpt-4
 
     claude:
@@ -28,7 +44,7 @@ ai:
         premium: claude-3-opus-20240229
 
     siliconflow:
-      api_key: 
+      api_key: sk-rhtdvakaxhecyocmsznvgepyelubdpqndumpjekludfvzbxh
       base_url: https://api.siliconflow.cn/v1
       models:
         fast: Qwen/Qwen2.5-7B-Instruct
@@ -52,7 +68,7 @@ ai:
 
     coder:
       provider: siliconflow
-      model: coder  # Use Qwen Coder for code generation
+      model: coder  # Use SiliconFlow Coder for code generation
       temperature: 0.2
       max_tokens: 3000
 
@@ -85,7 +101,7 @@ ai:
 analysis:
   level: standard  # quick | standard | deep
   parallel: true
-  max_threads: 4
+  max_threads: 4  # ✓ Aligned with validation_concurrency (both = 4)
   incremental: false
   timeout: 300  # seconds
 
@@ -98,6 +114,7 @@ output:
   format: html  # markdown | html | json
   verbose: true
   color: true
+  command_history_size: 10  # Number of commands to keep in history (up/down navigation)
 
 cache:
   enabled: true
