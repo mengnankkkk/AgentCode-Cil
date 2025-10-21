@@ -82,6 +82,7 @@ public class LLMClient {
         String openaiKey = System.getenv("OPENAI_API_KEY");
         String claudeKey = System.getenv("CLAUDE_API_KEY");
         String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
+        String nhhKey = System.getenv("NHH_API_KEY");
 
         // Fallback to config if env vars not set
         if (openaiKey == null || openaiKey.isEmpty()) {
@@ -105,7 +106,14 @@ public class LLMClient {
             }
         }
 
-        return ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
+        if (nhhKey == null || nhhKey.isEmpty()) {
+            AppConfig.ProviderConfig nhhConfig = configManager.getConfig().getAi().getProviders().get("nhh");
+            if (nhhConfig != null) {
+                nhhKey = nhhConfig.getApiKey();
+            }
+        }
+
+        return ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey, nhhKey);
     }
 
     /**
@@ -194,15 +202,33 @@ public class LLMClient {
      * Check if LLM is configured and available
      */
     public boolean isAvailable() {
+        // Check environment variables first
         String openaiKey = System.getenv("OPENAI_API_KEY");
         String claudeKey = System.getenv("CLAUDE_API_KEY");
         String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
+        String nhhKey = System.getenv("NHH_API_KEY");
         String configKey = configManager.getConfig().getAi().getApiKey();
 
-        return (openaiKey != null && !openaiKey.isEmpty()) ||
-               (claudeKey != null && !claudeKey.isEmpty()) ||
-               (siliconflowKey != null && !siliconflowKey.isEmpty()) ||
-               (configKey != null && !configKey.isEmpty());
+        // If env vars are set, we're good
+        if ((openaiKey != null && !openaiKey.isEmpty()) ||
+            (claudeKey != null && !claudeKey.isEmpty()) ||
+            (siliconflowKey != null && !siliconflowKey.isEmpty()) ||
+            (nhhKey != null && !nhhKey.isEmpty()) ||
+            (configKey != null && !configKey.isEmpty())) {
+            return true;
+        }
+
+        // Check if providers are configured in config file
+        AppConfig.AiConfig aiConfig = configManager.getConfig().getAi();
+        if (aiConfig.getProviders() != null && !aiConfig.getProviders().isEmpty()) {
+            for (AppConfig.ProviderConfig provider : aiConfig.getProviders().values()) {
+                if (provider != null && provider.getApiKey() != null && !provider.getApiKey().isEmpty()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

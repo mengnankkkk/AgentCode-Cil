@@ -4,6 +4,7 @@ import com.harmony.agent.core.ai.DecisionEngine;
 import com.harmony.agent.core.model.SecurityIssue;
 import com.harmony.agent.core.model.IssueSeverity;
 import com.harmony.agent.core.model.IssueCategory;
+import com.harmony.agent.core.model.CodeLocation;
 import com.harmony.agent.config.ConfigManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,20 +44,19 @@ public class DecisionEngineIntegrationTest {
      * 创建测试用的 SecurityIssue
      */
     private SecurityIssue createTestIssue(int id, String analyzer) {
-        SecurityIssue issue = new SecurityIssue();
-        issue.setTitle("Test Issue #" + id);
-        issue.setDescription("Test description for issue " + id);
-        issue.setAnalyzer(analyzer);
-        issue.setSeverity(IssueSeverity.MEDIUM);
-        issue.setCategory(IssueCategory.BUFFER_OVERFLOW);
-
-        // 设置位置信息
-        SecurityIssue.Location location = new SecurityIssue.Location(
-            "test.c", 100 + id, 10, 20
+        CodeLocation location = new CodeLocation(
+            "test.c", 100 + id, 10, "test code snippet"
         );
-        issue.setLocation(location);
-
-        return issue;
+        
+        return new SecurityIssue.Builder()
+            .id("issue-" + id)
+            .title("Test Issue #" + id)
+            .description("Test description for issue " + id)
+            .analyzer(analyzer)
+            .severity(IssueSeverity.MEDIUM)
+            .category(IssueCategory.BUFFER_OVERFLOW)
+            .location(location)
+            .build();
     }
 
     @Nested

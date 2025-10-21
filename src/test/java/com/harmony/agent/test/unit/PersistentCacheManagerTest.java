@@ -175,7 +175,7 @@ public class PersistentCacheManagerTest {
         @Test
         @DisplayName("应该支持禁用磁盘持久化")
         public void testDisablePersistence() {
-            PersistentCacheManager noP ersist =
+            PersistentCacheManager noPersist =
                 new PersistentCacheManager("test", false);
 
             noPersist.put("temp-key", "temp-value");

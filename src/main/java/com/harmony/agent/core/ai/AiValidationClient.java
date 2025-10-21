@@ -58,8 +58,15 @@ public class AiValidationClient {
             }
         }
 
+        String nhhKey = System.getenv("NHH_API_KEY");
+        if (nhhKey == null || nhhKey.isEmpty()) {
+            if (configManager.getConfig().getAi().getProviders().containsKey("nhh")) {
+                nhhKey = configManager.getConfig().getAi().getProviders().get("nhh").getApiKey();
+            }
+        }
+
         // Create provider factory
-        ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
+        ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey, nhhKey);
 
         // Use OpenAI for validation (fast and cost-effective)
         // Can be configured to use Claude for more complex analysis
