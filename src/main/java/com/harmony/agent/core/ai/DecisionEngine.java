@@ -46,7 +46,19 @@ public class DecisionEngine {
         );
         this.gson = new Gson();
         this.executorService = executorService;
-        this.validationConcurrency = configManager.getConfig().getAi().getValidationConcurrency();
+
+        // Derive effective concurrency based on configured limits to avoid rate-limit bursts
+        int configuredConcurrency = configManager.getConfig().getAi().getValidationConcurrency();
+        String rlMode = configManager.getConfig().getAi().getRateLimitMode();
+        if ("qps".equalsIgnoreCase(rlMode)) {
+            double qps = configManager.getConfig().getAi().getRequestsPerSecondLimit();
+            double safety = configManager.getConfig().getAi().getSafetyMargin();
+            int maxConc = (int) Math.max(1, Math.floor((qps > 0 ? qps : 1.0) * (safety > 0 ? safety : 1.0)));
+            this.validationConcurrency = Math.max(1, Math.min(configuredConcurrency, maxConc));
+        } else {
+            // In TPM mode we keep user-configured concurrency and rely on provider-level token limiter
+            this.validationConcurrency = Math.max(1, configuredConcurrency);
+        }
 
         logger.info("Decision Engine initialized with AI provider: {}, concurrency: {}",
             aiClient.getProviderName(), validationConcurrency);

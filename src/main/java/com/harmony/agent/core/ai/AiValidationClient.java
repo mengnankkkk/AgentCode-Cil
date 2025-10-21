@@ -5,6 +5,7 @@ import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.llm.model.LLMRequest;
 import com.harmony.agent.llm.model.LLMResponse;
 import com.harmony.agent.llm.model.Message;
+import com.harmony.agent.llm.provider.BaseLLMProvider;
 import com.harmony.agent.llm.provider.LLMProvider;
 import com.harmony.agent.llm.provider.ProviderFactory;
 import org.slf4j.Logger;
@@ -28,7 +29,7 @@ public class AiValidationClient {
     private final LLMProvider provider;
     private final String model;
     private final ConfigManager configManager;
-    private final RateLimiter rateLimiter; // Client-side rate limiting
+    private final RateLimiter rateLimiter; // Client-side rate limiting (QPS mode only; TPM handled at provider level)
 
     /**
      * Constructor with default configuration
@@ -67,13 +68,26 @@ public class AiValidationClient {
         this.provider = factory.getProvider(providerName);
         this.model = configManager.getConfig().getAi().getModel();
 
-        // Initialize rate limiter from configuration
-        double requestsPerSecond = configManager.getConfig().getAi().getRequestsPerSecondLimit();
-        if (requestsPerSecond <= 0) {
-            requestsPerSecond = 5.0; // Fallback default
+        // Configure global provider-level rate limiter based on config (QPS or TPM)
+        String mode = configManager.getConfig().getAi().getRateLimitMode();
+        double qpsLimit = configManager.getConfig().getAi().getRequestsPerSecondLimit();
+        int tpmLimit = configManager.getConfig().getAi().getTokensPerMinuteLimit();
+        double safetyMargin = configManager.getConfig().getAi().getSafetyMargin();
+        BaseLLMProvider.configureRateLimiter(mode, qpsLimit, tpmLimit, safetyMargin);
+
+        // Initialize optional local QPS limiter (we only use it in QPS mode to smooth bursts)
+        if ("qps".equalsIgnoreCase(mode)) {
+            double effectiveQps = (qpsLimit > 0 ? qpsLimit : 5.0) * (safetyMargin > 0 ? safetyMargin : 1.0);
+            this.rateLimiter = RateLimiter.create(effectiveQps);
+            logger.info("Rate limiter configured (QPS): {} req/s (safety {}%)", effectiveQps, (int)(safetyMargin * 100));
+        } else if ("tpm".equalsIgnoreCase(mode)) {
+            this.rateLimiter = null; // TPM throttling is handled at provider level using token permits
+            logger.info("Rate limiter configured (TPM): {} tokens/min (safety {}%) - handled at provider level",
+                tpmLimit, (int)(safetyMargin * 100));
+        } else {
+            this.rateLimiter = null;
+            logger.warn("Unknown rate limit mode '{}' - client-side limiter disabled; provider-level limiter configured.", mode);
         }
-        this.rateLimiter = RateLimiter.create(requestsPerSecond);
-        logger.info("Rate limiter initialized: {} requests/second", requestsPerSecond);
 
         if (!provider.isAvailable()) {
             logger.warn("LLM provider '{}' is not available - check API keys", providerName);
@@ -91,12 +105,20 @@ public class AiValidationClient {
         this.model = model;
         this.configManager = configManager;
 
-        // Initialize rate limiter from configuration
-        double requestsPerSecond = configManager.getConfig().getAi().getRequestsPerSecondLimit();
-        if (requestsPerSecond <= 0) {
-            requestsPerSecond = 5.0; // Fallback default
+        // Configure global provider-level rate limiter based on config (QPS or TPM)
+        String mode = configManager.getConfig().getAi().getRateLimitMode();
+        double qpsLimit = configManager.getConfig().getAi().getRequestsPerSecondLimit();
+        int tpmLimit = configManager.getConfig().getAi().getTokensPerMinuteLimit();
+        double safetyMargin = configManager.getConfig().getAi().getSafetyMargin();
+        BaseLLMProvider.configureRateLimiter(mode, qpsLimit, tpmLimit, safetyMargin);
+
+        // Optional local QPS limiter
+        if ("qps".equalsIgnoreCase(mode)) {
+            double effectiveQps = (qpsLimit > 0 ? qpsLimit : 5.0) * (safetyMargin > 0 ? safetyMargin : 1.0);
+            this.rateLimiter = RateLimiter.create(effectiveQps);
+        } else {
+            this.rateLimiter = null; // TPM handled at provider level
         }
-        this.rateLimiter = RateLimiter.create(requestsPerSecond);
     }
 
     /**
@@ -113,9 +135,13 @@ public class AiValidationClient {
         }
 
         // Acquire rate limiter permit (blocks until available)
-        logger.debug("Acquiring rate limit permit...");
-        rateLimiter.acquire();
-        logger.debug("Rate limit permit acquired");
+        if (rateLimiter != null) {
+            logger.debug("Acquiring rate limit permit (QPS mode)...");
+            rateLimiter.acquire();
+            logger.debug("Rate limit permit acquired");
+        } else {
+            logger.debug("Using provider-level rate limiter (TPM/QPS)");
+        }
 
         IOException lastException = null;
 
