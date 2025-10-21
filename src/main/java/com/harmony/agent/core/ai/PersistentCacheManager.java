@@ -35,6 +35,10 @@ public class PersistentCacheManager {
     private final String cacheType;  // "p2" 或 "p3"
     private final boolean persistent;
 
+    // 多线程同步锁 - 保护 L1 和 L2 缓存的并发访问
+    private final Object l1Lock = new Object();
+    private final Object l2Lock = new Object();
+
     /**
      * 创建缓存管理器
      *
@@ -73,7 +77,7 @@ public class PersistentCacheManager {
     }
 
     /**
-     * 获取缓存值 (L1 → L2)
+     * 获取缓存值 (L1 → L2) - 线程安全
      *
      * @param key 缓存键
      * @return 缓存值，如果未找到返回 null
@@ -83,11 +87,13 @@ public class PersistentCacheManager {
             return null;
         }
 
-        // 第1步：检查 L1 内存缓存
-        String cached = l1Cache.getIfPresent(key);
-        if (cached != null) {
-            logger.fine("Cache L1 HIT: " + shortKey(key));
-            return cached;
+        // 第1步：检查 L1 内存缓存 - 使用同步锁
+        synchronized (l1Lock) {
+            String cached = l1Cache.getIfPresent(key);
+            if (cached != null) {
+                logger.fine("Cache L1 HIT: " + shortKey(key));
+                return cached;
+            }
         }
 
         // 第2步：检查 L2 磁盘缓存（如果启用）
@@ -96,27 +102,31 @@ public class PersistentCacheManager {
             return null;
         }
 
-        Path cacheFile = getCacheFile(key);
-        if (Files.exists(cacheFile)) {
-            try {
-                // 检查过期时间
-                if (!isExpired(cacheFile)) {
-                    cached = Files.readString(cacheFile);
+        synchronized (l2Lock) {
+            Path cacheFile = getCacheFile(key);
+            if (Files.exists(cacheFile)) {
+                try {
+                    // 检查过期时间
+                    if (!isExpired(cacheFile)) {
+                        String cached = Files.readString(cacheFile);
 
-                    // 回源到 L1（热数据）
-                    l1Cache.put(key, cached);
-                    logger.fine("Cache L2 HIT (promoted to L1): " + shortKey(key));
-                    return cached;
-                } else {
-                    // 删除过期缓存
-                    try {
-                        Files.delete(cacheFile);
-                        logger.fine("Expired cache deleted: " + shortKey(key));
-                    } catch (IOException ignored) {
+                        // 回源到 L1（热数据）
+                        synchronized (l1Lock) {
+                            l1Cache.put(key, cached);
+                        }
+                        logger.fine("Cache L2 HIT (promoted to L1): " + shortKey(key));
+                        return cached;
+                    } else {
+                        // 删除过期缓存
+                        try {
+                            Files.delete(cacheFile);
+                            logger.fine("Expired cache deleted: " + shortKey(key));
+                        } catch (IOException ignored) {
+                        }
                     }
+                } catch (IOException e) {
+                    logger.warning("Failed to read cache file: " + cacheFile);
                 }
-            } catch (IOException e) {
-                logger.warning("Failed to read cache file: " + cacheFile);
             }
         }
 
@@ -125,7 +135,7 @@ public class PersistentCacheManager {
     }
 
     /**
-     * 存储缓存值 (L1 + L2)
+     * 存储缓存值 (L1 + L2) - 线程安全
      *
      * @param key 缓存键
      * @param value 缓存值
@@ -135,96 +145,110 @@ public class PersistentCacheManager {
             return;
         }
 
-        // 写入 L1
-        l1Cache.put(key, value);
-        logger.fine("Cached to L1: " + shortKey(key));
+        // 写入 L1 - 使用同步锁
+        synchronized (l1Lock) {
+            l1Cache.put(key, value);
+            logger.fine("Cached to L1: " + shortKey(key));
+        }
 
-        // 写入 L2（如果启用）
+        // 写入 L2（如果启用） - 使用同步锁
         if (!persistent) {
             return;
         }
 
-        Path cacheFile = getCacheFile(key);
-        try {
-            Files.createDirectories(cacheFile.getParent());
-            Files.writeString(cacheFile, value);
-            logger.fine("Cached to L2: " + shortKey(key));
-        } catch (IOException e) {
-            logger.warning("Failed to persist cache to disk: " + cacheFile);
-            // 继续执行，只是丢失磁盘缓存
+        synchronized (l2Lock) {
+            Path cacheFile = getCacheFile(key);
+            try {
+                Files.createDirectories(cacheFile.getParent());
+                Files.writeString(cacheFile, value);
+                logger.fine("Cached to L2: " + shortKey(key));
+            } catch (IOException e) {
+                logger.warning("Failed to persist cache to disk: " + cacheFile);
+                // 继续执行，只是丢失磁盘缓存
+            }
         }
     }
 
     /**
-     * 清理所有过期缓存
+     * 清理所有过期缓存 - 线程安全
      */
     public void cleanupExpired() {
         if (!persistent) {
             return;
         }
 
-        try {
-            Files.list(l2CachePath)
-                .forEach(path -> {
-                    if (isExpired(path)) {
-                        try {
-                            Files.delete(path);
-                            logger.fine("Cleaned expired cache: " + path.getFileName());
-                        } catch (IOException ignored) {
+        synchronized (l2Lock) {
+            try {
+                Files.list(l2CachePath)
+                    .forEach(path -> {
+                        if (isExpired(path)) {
+                            try {
+                                Files.delete(path);
+                                logger.fine("Cleaned expired cache: " + path.getFileName());
+                            } catch (IOException ignored) {
+                            }
                         }
-                    }
-                });
-            logger.info("Cache cleanup completed");
-        } catch (IOException e) {
-            logger.warning("Failed to cleanup cache: " + e.getMessage());
+                    });
+                logger.info("Cache cleanup completed");
+            } catch (IOException e) {
+                logger.warning("Failed to cleanup cache: " + e.getMessage());
+            }
         }
     }
 
     /**
-     * 清空所有缓存
+     * 清空所有缓存 - 线程安全
      */
     public void clear() {
-        l1Cache.invalidateAll();
-        logger.info("L1 cache cleared");
+        synchronized (l1Lock) {
+            l1Cache.invalidateAll();
+            logger.info("L1 cache cleared");
+        }
 
         if (!persistent) {
             return;
         }
 
-        try {
-            Files.list(l2CachePath)
-                .forEach(path -> {
-                    try {
-                        Files.delete(path);
-                    } catch (IOException ignored) {
-                    }
-                });
-            logger.info("L2 cache cleared");
-        } catch (IOException e) {
-            logger.warning("Failed to clear L2 cache: " + e.getMessage());
+        synchronized (l2Lock) {
+            try {
+                Files.list(l2CachePath)
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException ignored) {
+                        }
+                    });
+                logger.info("L2 cache cleared");
+            } catch (IOException e) {
+                logger.warning("Failed to clear L2 cache: " + e.getMessage());
+            }
         }
     }
 
     /**
-     * 获取缓存统计信息
+     * 获取缓存统计信息 - 线程安全
      */
     public CacheStats getStats() {
-        com.google.common.cache.CacheStats l1Stats = l1Cache.stats();
+        synchronized (l1Lock) {
+            com.google.common.cache.CacheStats l1Stats = l1Cache.stats();
 
-        int l2Count = 0;
-        if (persistent) {
-            try {
-                l2Count = (int) Files.list(l2CachePath).count();
-            } catch (IOException ignored) {
+            int l2Count = 0;
+            if (persistent) {
+                synchronized (l2Lock) {
+                    try {
+                        l2Count = (int) Files.list(l2CachePath).count();
+                    } catch (IOException ignored) {
+                    }
+                }
             }
-        }
 
-        return new CacheStats(
-            (long) l1Stats.hitCount(),
-            (long) l1Stats.missCount(),
-            (int) l1Cache.size() + l2Count,
-            l1Stats.hitRate()
-        );
+            return new CacheStats(
+                (long) l1Stats.hitCount(),
+                (long) l1Stats.missCount(),
+                (int) l1Cache.size() + l2Count,
+                l1Stats.hitRate()
+            );
+        }
     }
 
     /**

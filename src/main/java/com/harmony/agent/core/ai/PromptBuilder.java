@@ -11,6 +11,7 @@ public class PromptBuilder {
     /**
      * Build prompt for AI vulnerability validation
      * Analyzes whether a static analysis finding is a real vulnerability or false positive
+     * Enhanced with better detection of single-threaded scenarios and false positives from race condition warnings
      *
      * @param issue The security issue to validate
      * @param codeSlice The code context around the issue
@@ -18,7 +19,7 @@ public class PromptBuilder {
      */
     public static String buildIssueValidationPrompt(SecurityIssue issue, String codeSlice) {
         return String.format("""
-            You are a C/C++ static analysis and security expert.
+            You are a C/C++ static analysis and security expert with deep knowledge of concurrency issues.
             A tool (%s) found a *potential* security issue:
 
             - Issue: %s
@@ -34,6 +35,12 @@ public class PromptBuilder {
 
             Analyze this context carefully. Is this a *real, exploitable vulnerability*, or is it likely a *false positive*?
 
+            CRITICAL: If this is flagged as a "race condition" or "missing mutex" issue, check:
+            1. **Single-threaded context**: Does this code run in single-threaded environment (e.g., single CLI tool, event loop)?
+            2. **Local variables only**: Are ALL accessed variables local to the function (not global)?
+            3. **No concurrent access**: Is there evidence of concurrent access (threads, async, callbacks)?
+            4. **Semgrep false positives**: Many race condition warnings from Semgrep are FALSE POSITIVES in single-threaded contexts.
+
             Consider:
             - Buffer sizes and bounds checks
             - Null pointer checks
@@ -41,25 +48,34 @@ public class PromptBuilder {
             - Input validation
             - Error handling
             - Context-specific mitigations
+            - **Threading context** (single-threaded vs multi-threaded)
+            - **Global variable access** (unprotected globals in single-threaded context are NOT race conditions)
 
             Example 1 (Real Vulnerability):
             {
               "is_vulnerability": true,
-              "reason": "Buffer overflow: strcpy without bounds check on user input from untrusted source",
+              "reason": "Buffer overflow: strcpy without bounds check on user input from untrusted source. Variables accessed from multiple threads without synchronization.",
               "suggested_severity": "Critical"
             }
 
-            Example 2 (False Positive):
+            Example 2 (False Positive - Missing Mutex):
             {
               "is_vulnerability": false,
-              "reason": "Input is validated and size-limited (line 15) before strcpy call on line 18",
+              "reason": "Semgrep false positive: Global variable is only accessed in single-threaded CLI context. Code runs in main() function which is never called concurrently. No threading or async constructs present.",
+              "suggested_severity": "Info"
+            }
+
+            Example 3 (False Positive - Race Condition):
+            {
+              "is_vulnerability": false,
+              "reason": "False positive: Function only accesses local variables and read-only global config. No concurrent access possible. Single-threaded execution context (standard CLI tool).",
               "suggested_severity": "Info"
             }
 
             Now analyze this case and respond ONLY in the following JSON format:
             {
               "is_vulnerability": true/false,
-              "reason": "Your detailed technical explanation here...",
+              "reason": "Your detailed technical explanation here. Include threading context analysis if applicable.",
               "suggested_severity": "Critical/High/Medium/Low/Info"
             }
             """,

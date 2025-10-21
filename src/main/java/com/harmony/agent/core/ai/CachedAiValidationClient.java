@@ -30,6 +30,10 @@ public class CachedAiValidationClient {
     private final boolean usePersistentCache;
     private boolean cacheEnabled = true;
 
+    // 多线程同步锁
+    private final Object cacheLock = new Object();
+    private final Object delegateLock = new Object();
+
     /**
      * 使用持久化缓存的构造函数（推荐）
      *
@@ -73,7 +77,7 @@ public class CachedAiValidationClient {
     }
 
     /**
-     * 发送验证请求并使用缓存
+     * 发送验证请求并使用缓存（线程安全）
      *
      * @param prompt 验证提示
      * @param expectJson 是否期望 JSON 响应
@@ -84,34 +88,44 @@ public class CachedAiValidationClient {
             throws AiValidationClient.AiClientException {
 
         if (!cacheEnabled) {
-            return delegate.sendRequest(prompt, expectJson);
+            synchronized (delegateLock) {
+                return delegate.sendRequest(prompt, expectJson);
+            }
         }
 
         String cacheKey = createCacheKey(prompt, expectJson);
 
         if (usePersistentCache) {
-            // 使用新的持久化缓存 (P1 优化)
-            String cached = persistentCache.get(cacheKey);
-            if (cached != null) {
-                logger.debug("Cache HIT (persistent) - returning cached response");
-                return cached;
+            // 使用新的持久化缓存 (P1 优化) - 线程安全
+            synchronized (cacheLock) {
+                String cached = persistentCache.get(cacheKey);
+                if (cached != null) {
+                    logger.debug("Cache HIT (persistent) - returning cached response");
+                    return cached;
+                }
+
+                logger.debug("Cache MISS - sending request to LLM");
+                synchronized (delegateLock) {
+                    String result = delegate.sendRequest(prompt, expectJson);
+                    persistentCache.put(cacheKey, result);
+                    return result;
+                }
             }
 
-            logger.debug("Cache MISS - sending request to LLM");
-            String result = delegate.sendRequest(prompt, expectJson);
-            persistentCache.put(cacheKey, result);
-            return result;
-
         } else {
-            // 使用传统 Guava 缓存（向后兼容）
+            // 使用传统 Guava 缓存（向后兼容） - 线程安全
             try {
-                String result = legacyCache.get(cacheKey, () -> {
-                    logger.debug("Cache MISS - sending request to LLM");
-                    return delegate.sendRequest(prompt, expectJson);
-                });
+                synchronized (cacheLock) {
+                    String result = legacyCache.get(cacheKey, () -> {
+                        logger.debug("Cache MISS - sending request to LLM");
+                        synchronized (delegateLock) {
+                            return delegate.sendRequest(prompt, expectJson);
+                        }
+                    });
 
-                logger.debug("Cache HIT (legacy) - returning cached response");
-                return result;
+                    logger.debug("Cache HIT (legacy) - returning cached response");
+                    return result;
+                }
 
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();

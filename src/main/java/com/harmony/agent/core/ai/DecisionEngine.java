@@ -36,6 +36,14 @@ public class DecisionEngine {
     private static final double AI_CONFIRMED_CONFIDENCE = 0.95;
     private static final double AI_FAILED_CONFIDENCE_MULTIPLIER = 0.8;
 
+    // Semgrep race condition false positive detection
+    private static final String[] RACE_CONDITION_KEYWORDS = {
+        "race condition", "data race", "mutex", "concurrent", "thread-safe", "synchronization"
+    };
+    private static final String[] SINGLE_THREAD_INDICATORS = {
+        "main()", "cli", "single-threaded", "event loop", "sequential", "single thread"
+    };
+
     /**
      * Constructor
      */
@@ -159,6 +167,57 @@ public class DecisionEngine {
     }
 
     /**
+     * Determine if an issue is likely a Semgrep race condition false positive
+     * These are extremely common in single-threaded applications
+     */
+    private boolean isSemgrepRaceConditionFalsePositive(SecurityIssue issue, String codeSlice) {
+        String analyzer = issue.getAnalyzer().toLowerCase();
+        if (!analyzer.contains("semgrep")) {
+            return false;
+        }
+
+        String title = issue.getTitle().toLowerCase();
+        String description = issue.getDescription().toLowerCase();
+
+        // Check if this is a race condition / mutex related warning
+        boolean isRaceConditionWarning = false;
+        for (String keyword : RACE_CONDITION_KEYWORDS) {
+            if (title.contains(keyword) || description.contains(keyword)) {
+                isRaceConditionWarning = true;
+                break;
+            }
+        }
+
+        if (!isRaceConditionWarning) {
+            return false;
+        }
+
+        // Check for single-threaded indicators in code
+        String codeLower = codeSlice.toLowerCase();
+        for (String indicator : SINGLE_THREAD_INDICATORS) {
+            if (codeLower.contains(indicator)) {
+                logger.debug("Detected single-threaded context: {}", indicator);
+                return true;
+            }
+        }
+
+        // Check for threading constructs
+        if (codeLower.contains("pthread_create") ||
+            codeLower.contains("std::thread") ||
+            codeLower.contains("boost::thread") ||
+            codeLower.contains("thread pool") ||
+            codeLower.contains("concurrent") ||
+            codeLower.contains("async")) {
+            logger.debug("Detected multi-threaded constructs - not a false positive");
+            return false;
+        }
+
+        // No threading constructs found - likely single-threaded
+        logger.debug("No multi-threaded constructs found - likely Semgrep false positive");
+        return true;
+    }
+
+    /**
      * Determine if an issue needs AI validation
      */
     private boolean needsAiValidation(SecurityIssue issue) {
@@ -166,6 +225,19 @@ public class DecisionEngine {
 
         // Semgrep: high false positive rate (20-40%)
         if (analyzer.contains("semgrep")) {
+            // Pre-filter obvious Semgrep race condition false positives
+            // (we'll do a quick check without fetching code yet)
+            String title = issue.getTitle().toLowerCase();
+            String description = issue.getDescription().toLowerCase();
+
+            for (String keyword : RACE_CONDITION_KEYWORDS) {
+                if (title.contains(keyword) || description.contains(keyword)) {
+                    // This is a race condition warning - needs AI validation
+                    return true;
+                }
+            }
+
+            // Other Semgrep issues also need validation due to high false positive rate
             return true;
         }
 
@@ -370,6 +442,7 @@ public class DecisionEngine {
 
     /**
      * Callable task for parallel AI validation
+     * Enhanced with pre-filtering for obvious Semgrep false positives
      */
     private class AiValidationTask implements java.util.concurrent.Callable<SecurityIssue> {
         private final SecurityIssue originalIssue;
@@ -386,6 +459,13 @@ public class DecisionEngine {
                 int lineNumber = originalIssue.getLocation().getLineNumber();
 
                 String codeSlice = codeSlicer.getContextSlice(filePath, lineNumber);
+
+                // Pre-check: Quick filtering for Semgrep race condition false positives
+                if (isSemgrepRaceConditionFalsePositive(originalIssue, codeSlice)) {
+                    logger.info("Pre-filtered Semgrep race condition false positive: {} (single-threaded context)",
+                        originalIssue.getTitle());
+                    return null;  // Quick filter - no need to call AI
+                }
 
                 // Build validation prompt
                 String prompt = PromptBuilder.buildIssueValidationPrompt(originalIssue, codeSlice);
