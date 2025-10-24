@@ -8,6 +8,26 @@
 [![Java Version](https://img.shields.io/badge/Java-17+-blue)]()
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)]()
 
+## 🔒 CI/CD 说明
+
+本项目采用**手动触发**的 CI/CD 流程，确保测试在受控环境下运行：
+
+- ✅ 所有 CI 测试需要**手动批准**后才会执行
+- 🎯 支持选择性运行 E2E 测试和性能基准测试
+- 🔐 避免不必要的资源消耗和 API 调用
+
+### 如何手动触发 CI
+
+1. 进入 GitHub 仓库的 **Actions** 标签页
+2. 选择左侧的 **🚀 HarmonySafeAgent Tests** 工作流
+3. 点击右上角的 **Run workflow** 按钮
+4. 选择运行选项：
+   - **运行 E2E 测试**：选择 `true` 或 `false`
+   - **运行性能基准测试**：选择 `true` 或 `false`
+5. 点击 **Run workflow** 开始执行
+
+📖 **详细说明**：查看 [CI 快速启动](.github/CI_QUICKSTART.md) | [完整手册](.github/CI_MANUAL.md)
+
 ## ✨ 特性
 
 - 🔍 **静态安全分析**：集成Clang和Semgrep，识别内存安全、并发等问题
@@ -317,6 +337,13 @@ java -jar harmony-agent.jar analyze ./project  # 不使用 --incremental 标志
 3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 开启Pull Request
+
+### CI 测试说明
+
+- 本项目的 CI 工作流采用**手动触发**模式
+- 提交 PR 后，CI 测试不会自动运行
+- 项目维护者会在审查代码后手动触发 CI 测试
+- 如需在自己的 Fork 仓库中测试，可以手动触发工作流（参见上方 CI/CD 说明）
 
 ## 📄 许可证
 
