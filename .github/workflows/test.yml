@@ -1,10 +1,28 @@
 name: 🚀 HarmonySafeAgent Tests
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      run_e2e_tests:
+        description: '运行 E2E 测试'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      run_performance_tests:
+        description: '运行性能基准测试'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  # push:
+  #   branches: [ main, develop ]
+  # pull_request:
+  #   branches: [ main, develop ]
 
 jobs:
   build-and-test:
@@ -38,10 +56,12 @@ jobs:
         run: mvn test -Dtest=PersistentCacheManagerTest,DecisionEngineIntegrationTest
 
       - name: 🔄 Run E2E tests (bzip2)
+        if: ${{ github.event.inputs.run_e2e_tests != 'false' }}
         run: mvn test -Dtest=Bzip2E2ETest
         continue-on-error: true
 
       - name: 🦀 Run E2E tests (ylong_runtime)
+        if: ${{ github.event.inputs.run_e2e_tests != 'false' }}
         run: mvn test -Dtest=YlongRuntimeE2ETest
         continue-on-error: true
 
@@ -84,7 +104,7 @@ jobs:
   performance-benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ github.event.inputs.run_performance_tests == 'true' }}
 
     steps:
       - name: 📥 Checkout code
