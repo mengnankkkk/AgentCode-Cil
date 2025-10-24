@@ -144,8 +144,8 @@ public class LLMClient {
         if (roleConfig != null && roleConfig.getModel() != null) {
             String model = roleConfig.getModel();
 
-            // If model is a reference like "fast", "standard", "premium", resolve it
-            if (model.matches("fast|standard|premium")) {
+            // If model is a reference like "fast", "standard", "premium", "coder", resolve it
+            if (model.matches("fast|standard|premium|coder")) {
                 String provider = getProviderForRole(roleName);
                 AppConfig.ProviderConfig providerConfig = configManager.getConfig().getAi().getProviders().get(provider);
                 if (providerConfig != null && providerConfig.getModels().containsKey(model)) {
