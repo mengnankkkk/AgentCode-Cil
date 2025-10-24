@@ -577,7 +577,7 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
-     * Handle /analyze command
+     * Handle /analyze command - Enhanced with Strategic Analysis
      */
     private void handleAnalyzeCommand(String args) {
         if (args.isEmpty()) {
@@ -588,8 +588,17 @@ public class InteractiveCommand implements Callable<Integer> {
             printer.info("  --compile-commands <file>    Path to compile_commands.json");
             printer.info("  --incremental                Enable incremental analysis");
             printer.info("  --no-ai                      Disable AI-enhanced analysis");
+            printer.info("  --strategic                  Enable strategic analysis (NEW!)");
             printer.blank();
-            printer.info("Example: /analyze src/main -l quick -o report.html");
+            printer.info("Examples:");
+            printer.info("  /analyze src/main -l quick -o report.html");
+            printer.info("  /analyze src/main --strategic    # Strategic analysis with scoring & triage");
+            return;
+        }
+
+        // Check if strategic analysis is requested
+        if (args.contains("--strategic")) {
+            handleStrategicAnalyzeCommand(args.replace("--strategic", "").trim());
             return;
         }
 
@@ -625,6 +634,51 @@ public class InteractiveCommand implements Callable<Integer> {
             printer.info("Type /analyze without arguments for usage help");
         } catch (Exception e) {
             printer.error("Analysis failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle strategic analysis command
+     */
+    private void handleStrategicAnalyzeCommand(String args) {
+        if (args.trim().isEmpty()) {
+            printer.error("Usage: /analyze <path> --strategic");
+            printer.info("Example: /analyze src/main --strategic");
+            return;
+        }
+
+        try {
+            // Create StrategicAnalysisCommand instance
+            StrategicAnalysisCommand strategicCmd = new StrategicAnalysisCommand();
+
+            // Parse arguments using picocli
+            String[] argArray = parseCommandLineArgs(args);
+            picocli.CommandLine cmd = new picocli.CommandLine(strategicCmd);
+
+            // Set parent for printer and config access
+            java.lang.reflect.Field parentField = StrategicAnalysisCommand.class.getDeclaredField("parent");
+            parentField.setAccessible(true);
+            parentField.set(strategicCmd, parent);
+
+            // Parse and execute
+            int exitCode = cmd.execute(argArray);
+
+            // Show completion message
+            printer.blank();
+            if (exitCode == 0) {
+                printer.success("✅ Strategic analysis completed successfully!");
+            } else {
+                printer.error("❌ Strategic analysis failed with exit code: " + exitCode);
+            }
+
+        } catch (picocli.CommandLine.ParameterException e) {
+            printer.error("Invalid arguments: " + e.getMessage());
+            printer.info("Type /analyze <path> --strategic for strategic analysis");
+        } catch (Exception e) {
+            printer.error("Strategic analysis failed: " + e.getMessage());
             if (parent.isVerbose()) {
                 e.printStackTrace();
             }
@@ -1110,8 +1164,10 @@ public class InteractiveCommand implements Callable<Integer> {
 
         printer.subheader("Analysis & Tools");
         printer.keyValue("  /analyze <path>", "Analyze code for security issues");
+        printer.keyValue("  /analyze <path> --strategic", "Strategic analysis with scoring & triage (NEW!)");
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
+        printer.info("  💡 Strategic analysis includes T1.1 Security Scoring + T1.2 Triage Advisor");
         printer.blank();
 
         printer.subheader("Auto-Fix (NEW!)");

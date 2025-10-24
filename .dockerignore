@@ -1,0 +1,69 @@
+# Docker ignore file for HarmonySafeAgent
+
+# Build artifacts
+target/
+*.jar
+*.war
+*.ear
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation (keep essential docs)
+docs/
+claudedocs/
+*.md
+!README.md
+
+# Test files
+test-*.c
+test-*.cpp
+*.test
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Node modules (if any)
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Maven local repository
+.m2/
+
+# Configuration with secrets
+.env
+*.key
+*.pem
+
+# Reports and output
+reports/
+output/
+*.html
+*.json
+!src/main/resources/templates/*.html
+
+# Cache directories
+.harmony-agent/
+cache/

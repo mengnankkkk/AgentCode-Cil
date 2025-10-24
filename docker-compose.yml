@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  harmony-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: harmony-safe-agent:latest
+    container_name: harmony-agent
+    
+    # Environment variables
+    environment:
+      - JAVA_OPTS=-Xmx2g -Xms512m
+      - HARMONY_CONFIG_DIR=/app/config
+      - HARMONY_WORKSPACE_DIR=/app/workspace
+      - HARMONY_REPORTS_DIR=/app/reports
+      - HARMONY_CACHE_DIR=/app/cache
+      # AI API Keys (set these in .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    
+    # Volumes for persistent data
+    volumes:
+      # Mount source code to analyze
+      - ./workspace:/app/workspace:ro
+      # Mount reports output
+      - ./reports:/app/reports
+      # Mount cache for performance
+      - ./cache:/app/cache
+      # Mount config for customization
+      - ./config:/app/config
+      # Mount user settings
+      - harmony-user-data:/home/harmony/.harmony-agent
+    
+    # Interactive mode
+    stdin_open: true
+    tty: true
+    
+    # Network configuration
+    ports:
+      - "8080:8080"  # For future web interface
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "java", "-jar", "harmony-agent.jar", "config", "get", "ai.provider"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Redis for caching (future enhancement)
+  redis:
+    image: redis:7-alpine
+    container_name: harmony-redis
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    profiles:
+      - cache
+
+volumes:
+  harmony-user-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  default:
+    name: harmony-network

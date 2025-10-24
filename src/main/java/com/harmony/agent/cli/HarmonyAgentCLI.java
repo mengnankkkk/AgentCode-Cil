@@ -20,6 +20,7 @@ import java.util.concurrent.Callable;
     subcommands = {
         InteractiveCommand.class,
         AnalyzeCommand.class,
+        StrategicAnalysisCommand.class,  // NEW: Strategic analysis with scoring and triage
         SuggestCommand.class,
         RefactorCommand.class,
         ReportCommand.class,

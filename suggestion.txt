@@ -1,0 +1,33 @@
+T6.1 (E2E 测试): bzip2 (C/C++)
+
+执行：
+
+获取 bzip2 源码并生成 compile_commands.json。
+
+运行 /analyze: ... analyze . --compile-commands ... --level standard -o bzip2-report.html
+
+验证: P5 报告是否成功生成？P3 AI 过滤是否正常工作（0 filtered Bug 已修复）？P5 计时器是否准确（例如 10-15 分钟）？
+
+运行 /refactor: ... refactor --file bzlib.c --line [任选一个函数行号]
+
+验证: P4 是否返回了详细的 Markdown 迁移建议（而不是占位符）？
+
+运行 /autofix: ... autofix <issue_id_from_report>
+
+验证: P8/P9 的 P-C-R-T 循环是否被激活？CodeValidator 是否正确调用 Clang 和 Semgrep？
+
+运行 /accept。
+
+T6.2 (E2E 测试): ylong_runtime (Rust)
+
+执行：
+
+获取 ylong_runtime 源码。
+
+运行 /analyze: ... analyze .
+
+验证: P9.5 RustAnalyzer (Clippy/Geiger) 是否成功运行并找出 unsafe 问题？
+
+运行 /autofix: ... autofix <unsafe_issue_id>
+
+验证: P9.5 CodeValidator 是否正确调用 cargo check 和 Clippy/Geiger 进行验证？
