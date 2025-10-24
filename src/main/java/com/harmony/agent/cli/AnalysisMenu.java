@@ -181,7 +181,8 @@ public class AnalysisMenu {
      * Get user's menu choice (1, 2, or 3)
      */
     private int getUserChoice() {
-        try (Scanner scanner = new Scanner(System.in)) {
+        try {
+            Scanner scanner = new Scanner(System.in);
             printer.blank();
             System.out.print("请选择 (1-3): ");
 
@@ -264,7 +265,8 @@ public class AnalysisMenu {
                     printer.info("[2] 拒绝此修复 (Reject)");
                     System.out.print("请选择 (1-2): ");
 
-                    try (Scanner scanner = new Scanner(System.in)) {
+                    try {
+                        Scanner scanner = new Scanner(System.in);
                         String acceptChoice = scanner.nextLine().trim();
 
                         if ("1".equals(acceptChoice)) {
@@ -275,6 +277,10 @@ public class AnalysisMenu {
                             changeManager.discardPendingChange();
                             printer.info("✗ 修复已拒绝");
                         }
+                    } catch (Exception e) {
+                        logger.warn("Failed to read user input for accepting fix", e);
+                        changeManager.discardPendingChange();
+                        printer.info("✗ 修复已拒绝 (读取输入失败)");
                     }
 
                     printer.blank();
