@@ -85,26 +85,35 @@ public enum ProjectType {
     /**
      * Detect project type from directory
      * Looks for characteristic files (pom.xml, compile_commands.json, etc.)
+     * Priority order:
+     * 1. compile_commands.json (C/C++ - most explicit)
+     * 2. Cargo.toml (Rust - most explicit)
+     * 3. pom.xml/build.gradle (Java)
+     * 4. CMakeLists.txt/Makefile (C/C++ fallback)
      */
     public static ProjectType detectFromDirectory(java.io.File directory) {
         if (directory == null || !directory.isDirectory()) {
             return UNKNOWN;
         }
 
-        // Check for Java project indicators
+        // Priority 1: Check for compile_commands.json (C/C++ - most explicit indicator)
+        if (new java.io.File(directory, "compile_commands.json").exists()) {
+            return C_CPP;
+        }
+
+        // Priority 2: Check for Rust project indicators
+        if (new java.io.File(directory, "Cargo.toml").exists()) {
+            return RUST;
+        }
+
+        // Priority 3: Check for Java project indicators
         if (new java.io.File(directory, "pom.xml").exists() ||
             new java.io.File(directory, "build.gradle").exists()) {
             return JAVA;
         }
 
-        // Check for Rust project indicators
-        if (new java.io.File(directory, "Cargo.toml").exists()) {
-            return RUST;
-        }
-
-        // Check for C/C++ project indicators
-        if (new java.io.File(directory, "compile_commands.json").exists() ||
-            new java.io.File(directory, "CMakeLists.txt").exists() ||
+        // Priority 4: Check for other C/C++ project indicators (fallback)
+        if (new java.io.File(directory, "CMakeLists.txt").exists() ||
             new java.io.File(directory, "Makefile").exists()) {
             return C_CPP;
         }
