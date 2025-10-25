@@ -12,6 +12,8 @@ import com.harmony.agent.core.model.SecurityIssue;
 import com.harmony.agent.core.report.JsonReportWriter;
 import com.harmony.agent.llm.provider.LLMProvider;
 import com.harmony.agent.llm.provider.ProviderFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Option;
@@ -33,6 +35,8 @@ import java.util.stream.Collectors;
     mixinStandardHelpOptions = true
 )
 public class RefactorCommand implements Callable<Integer> {
+
+    private static final Logger logger = LoggerFactory.getLogger(RefactorCommand.class);
 
     @ParentCommand
     private HarmonyAgentCLI parent;
@@ -344,6 +348,9 @@ public class RefactorCommand implements Callable<Integer> {
                 }
             }
 
+            // 解析模型别名（如 fast, standard, coder 等）
+            model = resolveModelAlias(configManager, providerName, model);
+
             // 创建LLMProvider
             String openaiKey = System.getenv("OPENAI_API_KEY");
             if (openaiKey == null || openaiKey.isEmpty()) {
@@ -419,5 +426,39 @@ public class RefactorCommand implements Callable<Integer> {
             }
             return 1;
         }
+    }
+
+    /**
+     * Resolve model alias (fast, standard, premium, coder) to actual model name
+     */
+    private String resolveModelAlias(ConfigManager configManager, String providerName, String modelAlias) {
+        if (modelAlias == null || modelAlias.isEmpty()) {
+            return modelAlias;
+        }
+
+        // Check if it's already a full model name (contains '/' or '-')
+        if (modelAlias.contains("/") || modelAlias.contains("-")) {
+            return modelAlias;
+        }
+
+        // Try to resolve from provider models configuration
+        try {
+            var providers = configManager.getConfig().getAi().getProviders();
+            if (providers != null && providers.containsKey(providerName)) {
+                var providerConfig = providers.get(providerName);
+                var models = providerConfig.getModels();
+                if (models != null && models.containsKey(modelAlias)) {
+                    String resolvedModel = models.get(modelAlias);
+                    logger.debug("Resolved model alias '{}' to '{}' for provider '{}'", 
+                        modelAlias, resolvedModel, providerName);
+                    return resolvedModel;
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to resolve model alias '{}': {}", modelAlias, e.getMessage());
+            // If resolution fails, return original alias
+        }
+
+        return modelAlias;
     }
 }
