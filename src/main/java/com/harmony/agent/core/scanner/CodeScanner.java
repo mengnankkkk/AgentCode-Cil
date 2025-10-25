@@ -1,10 +1,12 @@
 package com.harmony.agent.core.scanner;
 
+import com.harmony.agent.core.model.ProjectType;
 import com.harmony.agent.core.parser.CompileCommandsParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.*;
@@ -15,14 +17,25 @@ import java.util.stream.Collectors;
 
 /**
  * Code file scanner with support for filtering and incremental scanning
+ * Supports C/C++, Java, and Rust projects based on project type detection
  */
 public class CodeScanner {
 
     private static final Logger logger = LoggerFactory.getLogger(CodeScanner.class);
 
     // Supported C/C++ file extensions
-    private static final Set<String> SUPPORTED_EXTENSIONS = Set.of(
+    private static final Set<String> C_CPP_EXTENSIONS = Set.of(
         ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"
+    );
+
+    // Supported Java file extensions
+    private static final Set<String> JAVA_EXTENSIONS = Set.of(
+        ".java"
+    );
+
+    // Supported Rust file extensions
+    private static final Set<String> RUST_EXTENSIONS = Set.of(
+        ".rs"
     );
 
     // Default ignore patterns
@@ -35,6 +48,8 @@ public class CodeScanner {
     private final Set<String> ignorePatterns;
     private final boolean useGitignore;
     private final CompileCommandsParser compileCommandsParser;
+    private final ProjectType projectType;
+    private final Set<String> supportedExtensions;
 
     public CodeScanner(String basePath) {
         this(basePath, true, null);
@@ -48,6 +63,19 @@ public class CodeScanner {
         this.basePath = Paths.get(basePath).toAbsolutePath().normalize();
         this.ignorePatterns = new HashSet<>(DEFAULT_IGNORE_PATTERNS);
         this.useGitignore = useGitignore;
+
+        // Detect project type based on directory contents
+        this.projectType = ProjectType.detectFromDirectory(this.basePath.toFile());
+        logger.info("Detected project type: {}", this.projectType.getDisplayName());
+
+        // Set supported extensions based on project type
+        this.supportedExtensions = switch (this.projectType) {
+            case C_CPP -> C_CPP_EXTENSIONS;
+            case JAVA -> JAVA_EXTENSIONS;
+            case RUST -> RUST_EXTENSIONS;
+            default -> C_CPP_EXTENSIONS; // Default to C/C++ for unknown types
+        };
+        logger.info("Using file extensions: {}", this.supportedExtensions);
 
         // Initialize compile_commands parser if provided
         if (compileCommandsPath != null) {
@@ -66,24 +94,24 @@ public class CodeScanner {
             loadGitignorePatterns();
         }
 
-        logger.info("CodeScanner initialized for: {}", this.basePath);
+        logger.info("CodeScanner initialized for: {} ({})", this.basePath, this.projectType.getDisplayName());
     }
 
     /**
-     * Scan for all C/C++ source files
+     * Scan for all source files based on detected project type
      */
     public List<Path> scanAll() throws IOException {
-        // Prioritize compile_commands.json if available
-        if (compileCommandsParser != null) {
+        // Prioritize compile_commands.json if available (C/C++ projects)
+        if (compileCommandsParser != null && projectType == ProjectType.C_CPP) {
             logger.info("Using compile_commands.json for file discovery");
             Set<Path> sourceFiles = compileCommandsParser.getSourceFiles();
             List<Path> result = new ArrayList<>(sourceFiles);
-            logger.info("Found {} C/C++ files from compile_commands.json", result.size());
+            logger.info("Found {} {} files from compile_commands.json", result.size(), projectType.getDisplayName());
             return result;
         }
 
         // Fall back to filesystem scan
-        logger.info("Starting filesystem scan of: {}", basePath);
+        logger.info("Starting filesystem scan of: {} (looking for {} files)", basePath, projectType.getDisplayName());
 
         if (!Files.exists(basePath)) {
             throw new IOException("Path does not exist: " + basePath);
@@ -116,7 +144,7 @@ public class CodeScanner {
             }
         });
 
-        logger.info("Found {} C/C++ files", files.size());
+        logger.info("Found {} {} files", files.size(), projectType.getDisplayName());
         return files;
     }
 
@@ -124,7 +152,7 @@ public class CodeScanner {
      * Scan for changed files only (incremental scan using git)
      */
     public List<Path> scanIncremental() throws IOException {
-        logger.info("Starting incremental scan of: {}", basePath);
+        logger.info("Starting incremental scan of: {} ({})", basePath, projectType.getDisplayName());
 
         if (!isGitRepository()) {
             logger.warn("Not a git repository, falling back to full scan");
@@ -138,7 +166,7 @@ public class CodeScanner {
                 .filter(path -> !shouldIgnore(path))
                 .collect(Collectors.toList());
 
-            logger.info("Found {} changed C/C++ files", result.size());
+            logger.info("Found {} changed {} files", result.size(), projectType.getDisplayName());
             return result;
         } catch (IOException e) {
             logger.error("Failed to get git changes, falling back to full scan", e);
@@ -147,11 +175,11 @@ public class CodeScanner {
     }
 
     /**
-     * Check if file is a supported C/C++ file
+     * Check if file is a supported file based on project type
      */
     private boolean isSupportedFile(Path file) {
         String fileName = file.getFileName().toString().toLowerCase();
-        return SUPPORTED_EXTENSIONS.stream()
+        return supportedExtensions.stream()
             .anyMatch(fileName::endsWith);
     }
 
@@ -291,6 +319,13 @@ public class CodeScanner {
      */
     public Path getBasePath() {
         return basePath;
+    }
+
+    /**
+     * Get detected project type
+     */
+    public ProjectType getProjectType() {
+        return projectType;
     }
 
     /**
