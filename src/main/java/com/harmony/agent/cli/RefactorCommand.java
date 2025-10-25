@@ -184,6 +184,9 @@ public class RefactorCommand implements Callable<Integer> {
                 }
             }
 
+            // 解析模型别名（如 fast, standard, coder 等）
+            model = resolveModelAlias(configManager, providerName, model);
+
             // Create LLMProvider
             String openaiKey = System.getenv("OPENAI_API_KEY");
             if (openaiKey == null || openaiKey.isEmpty()) {
