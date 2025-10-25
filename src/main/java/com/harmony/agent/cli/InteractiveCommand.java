@@ -367,6 +367,10 @@ public class InteractiveCommand implements Callable<Integer> {
                 handleRefactorCommand(args);
                 break;
 
+            case "review":
+                handleReviewCommand(args);
+                break;
+
             case "config":
                 showConfig();
                 break;
@@ -587,7 +591,7 @@ public class InteractiveCommand implements Callable<Integer> {
             printer.info("  -o, --output <file>          Output HTML report file");
             printer.info("  --compile-commands <file>    Path to compile_commands.json");
             printer.info("  --incremental                Enable incremental analysis");
-            printer.info("  --no-ai                      Disable AI-enhanced analysis");
+            printer.info("  --ai                         Enable AI-enhanced analysis (disabled by default)");
             printer.info("  --strategic                  Enable strategic analysis (NEW!)");
             printer.blank();
             printer.info("Examples:");
@@ -774,13 +778,17 @@ public class InteractiveCommand implements Callable<Integer> {
             printer.error("Usage: /refactor <path> [options]");
             printer.info("Options:");
             printer.info("  -t, --type <type>        Refactor type: fix | rust-migration (default: fix)");
-            printer.info("  -o, --output <dir>       Output directory for refactored code");
-            printer.info("  -f, --file <file>        Source file for Rust migration (required for rust-migration)");
-            printer.info("  -l, --line <number>      Line number for Rust migration (required for rust-migration)");
+            printer.info("  -o, --output <dir>       Output directory (required for rust-migration)");
+            printer.info("  -n, --number <number>    Issue number to refactor (for fix type)");
             printer.blank();
             printer.info("Examples:");
-            printer.info("  /refactor src/main -t fix -o output");
-            printer.info("  /refactor src/main -t rust-migration -f bzlib.c -l 234");
+            printer.info("  /refactor report.json -t fix -n 0");
+            printer.info("  /refactor /path/to/bzip2 -t rust-migration -o /path/to/bzip2-rust");
+            printer.blank();
+            printer.info("Rust Migration:");
+            printer.info("  - Converts entire C/C++ projects to Rust");
+            printer.info("  - Processes files one by one with user confirmation");
+            printer.info("  - Options: [a]ccept / [s]kip / [v]iew full / [q]uit");
             return;
         }
 
@@ -813,6 +821,67 @@ public class InteractiveCommand implements Callable<Integer> {
             printer.info("Type /refactor without arguments for usage help");
         } catch (Exception e) {
             printer.error("Refactoring failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle /review command
+     */
+    private void handleReviewCommand(String args) {
+        if (args.isEmpty()) {
+            printer.error("Usage: /review <path> [options]");
+            printer.info("Options:");
+            printer.info("  -f, --focus <type>       Review focus: all | security | performance | maintainability | best-practices | code-smells");
+            printer.info("  -o, --output <file>      Output file path for review report");
+            printer.info("  --merge-report <file>    Merge review results into existing analysis report");
+            printer.info("  --max-files <number>     Maximum number of files to review (default: 50)");
+            printer.blank();
+            printer.info("Examples:");
+            printer.info("  /review src/main -f security -o review.json");
+            printer.info("  /review bzlib.c -f all");
+            printer.info("  /review src/ --merge-report analysis.json");
+            printer.blank();
+            printer.info("Code Review:");
+            printer.info("  - AI-powered analysis inspired by kodus-ai");
+            printer.info("  - Finds bugs, security issues, and code quality problems");
+            printer.info("  - Can merge results into existing analysis reports");
+            return;
+        }
+
+        try {
+            // Create ReviewCommand instance
+            ReviewCommand reviewCmd = new ReviewCommand();
+
+            // Parse arguments using picocli
+            String[] argArray = parseCommandLineArgs(args);
+            picocli.CommandLine cmd = new picocli.CommandLine(reviewCmd);
+
+            // Set parent for printer and config access
+            java.lang.reflect.Field parentField = ReviewCommand.class.getDeclaredField("parent");
+            parentField.setAccessible(true);
+            parentField.set(reviewCmd, parent);
+
+            // Parse and execute
+            int exitCode = cmd.execute(argArray);
+
+            // Show completion message
+            printer.blank();
+            if (exitCode == 0) {
+                printer.success("✅ Code review completed successfully!");
+            } else if (exitCode == 2) {
+                printer.error("❌ Code review found critical issues!");
+            } else {
+                printer.warning("⚠️  Code review completed with issues");
+            }
+
+        } catch (picocli.CommandLine.ParameterException e) {
+            printer.error("Invalid arguments: " + e.getMessage());
+            printer.info("Type /review without arguments for usage help");
+        } catch (Exception e) {
+            printer.error("Code review failed: " + e.getMessage());
             if (parent.isVerbose()) {
                 e.printStackTrace();
             }
@@ -990,73 +1059,323 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
-     * Handle /autofix command - generate a fix for a security issue
+     * Handle /autofix command - AI-powered batch automatic fixing from JSON report
+     * Usage: /autofix <report.json> [options]
+     * Options: -n <number> | -s <severity> | --patch | --direct
      */
     private void handleAutoFixCommand(String args) {
         if (args.isEmpty()) {
-            printer.error("Usage: /autofix <issue_id> or /autofix <file>:<line>");
-            printer.info("Example: /autofix issue_123 or /autofix src/main.c:45");
-            printer.info("Run /analyze first to discover issues");
-            return;
-        }
-
-        if (lastAnalysisResult == null || lastAnalysisResult.getBugs().isEmpty()) {
-            printer.warning("No issues found. Run /spotbugs first to discover issues.");
+            printer.error("Usage: /autofix <report.json> [options]");
+            printer.info("Options:");
+            printer.info("  -n <number>      Fix specific issue number");
+            printer.info("  -s <severity>    Minimum severity (critical|high|medium|low), default: high");
+            printer.info("  --patch          Generate .patch files (default)");
+            printer.info("  --direct         Apply fixes directly to code");
+            printer.info("  --both           Both patch and direct");
+            printer.blank();
+            printer.info("Examples:");
+            printer.info("  /autofix analysis.json");
+            printer.info("  /autofix analysis.json -n 0");
+            printer.info("  /autofix analysis.json -s critical --direct");
             return;
         }
 
         try {
-            // Try to find the issue
-            AnalysisResult.Bug targetBug = null;
+            // 解析参数
+            String[] argParts = args.split("\\s+");
+            String reportPath = argParts[0];
+            Integer issueNumber = null;
+            String minSeverity = "high";
+            String outputMode = "patch";
 
-            // Case 1: Issue ID (like "issue_123" or just the number)
-            if (args.matches("\\d+") || args.startsWith("issue_")) {
-                int issueIndex = args.startsWith("issue_")
-                    ? Integer.parseInt(args.substring(6))
-                    : Integer.parseInt(args);
-
-                if (issueIndex >= 0 && issueIndex < lastAnalysisResult.getBugs().size()) {
-                    targetBug = lastAnalysisResult.getBugs().get(issueIndex);
-                }
-            }
-            // Case 2: file:line format
-            else if (args.contains(":")) {
-                String[] parts = args.split(":");
-                if (parts.length == 2) {
-                    String file = parts[0];
-                    int line = Integer.parseInt(parts[1]);
-
-                    for (AnalysisResult.Bug bug : lastAnalysisResult.getBugs()) {
-                        if (bug.getFile().endsWith(file) && bug.getLine() == line) {
-                            targetBug = bug;
-                            break;
-                        }
-                    }
+            // 解析选项
+            for (int i = 1; i < argParts.length; i++) {
+                if (argParts[i].equals("-n") && i + 1 < argParts.length) {
+                    issueNumber = Integer.parseInt(argParts[++i]);
+                } else if (argParts[i].equals("-s") && i + 1 < argParts.length) {
+                    minSeverity = argParts[++i];
+                } else if (argParts[i].equals("--patch")) {
+                    outputMode = "patch";
+                } else if (argParts[i].equals("--direct")) {
+                    outputMode = "direct";
+                } else if (argParts[i].equals("--both")) {
+                    outputMode = "both";
                 }
             }
 
-            if (targetBug == null) {
-                printer.error("Issue not found: " + args);
-                printer.info("Available issues:");
-                for (int i = 0; i < Math.min(5, lastAnalysisResult.getBugs().size()); i++) {
-                    AnalysisResult.Bug bug = lastAnalysisResult.getBugs().get(i);
-                    printer.info(String.format("  [%d] %s:%d - %s", i, bug.getFile(), bug.getLine(), bug.getMessage()));
-                }
+            // 验证报告文件
+            java.nio.file.Path reportFilePath = java.nio.file.Paths.get(reportPath);
+            if (!java.nio.file.Files.exists(reportFilePath)) {
+                printer.error("Report file not found: " + reportPath);
+                printer.info("Run /analyze first to generate a report");
                 return;
             }
 
-            // Convert Bug to SecurityIssue (placeholder - needs proper conversion)
-            printer.info("Found issue: " + targetBug.getMessage());
-            printer.warning("Auto-fix integration coming soon!");
-            printer.info("Will generate fix for: " + targetBug.getFile() + ":" + targetBug.getLine());
+            printer.header("AI-Powered Auto-Fix");
+            printer.info("Report: " + reportPath);
+            printer.info("Mode: " + outputMode);
+            printer.blank();
 
-            // TODO: Convert AnalysisResult.Bug to SecurityIssue and call autoFixOrchestrator.generateFix()
+            // 读取 JSON 报告
+            printer.spinner("Loading analysis report...", false);
+            com.harmony.agent.core.report.JsonReportWriter jsonReader =
+                new com.harmony.agent.core.report.JsonReportWriter();
+            com.harmony.agent.core.model.ScanResult scanResult = jsonReader.read(reportFilePath);
+            printer.spinner("Loading analysis report", true);
+
+            java.util.List<com.harmony.agent.core.model.SecurityIssue> allIssues = scanResult.getIssues();
+            if (allIssues.isEmpty()) {
+                printer.success("No issues found in report!");
+                return;
+            }
+
+            printer.info("Found " + allIssues.size() + " issue(s) in report");
+            printer.blank();
+
+            // 过滤问题
+            java.util.List<com.harmony.agent.core.model.SecurityIssue> issuesToFix;
+            if (issueNumber != null) {
+                if (issueNumber < 0 || issueNumber >= allIssues.size()) {
+                    printer.error("Invalid issue number: " + issueNumber);
+                    printer.info("Valid range: 0 to " + (allIssues.size() - 1));
+                    return;
+                }
+                issuesToFix = java.util.List.of(allIssues.get(issueNumber));
+                printer.info("Selected issue #" + issueNumber + " to fix");
+            } else {
+                issuesToFix = filterIssuesBySeverity(allIssues, minSeverity);
+                printer.info("Filtered " + issuesToFix.size() + " issue(s) with severity >= " + minSeverity);
+            }
+
+            if (issuesToFix.isEmpty()) {
+                printer.warning("No issues match the filter criteria");
+                return;
+            }
+
+            printer.blank();
+
+            // 创建 patch 目录
+            java.nio.file.Path patchDirPath = java.nio.file.Paths.get("patches");
+            if (!java.nio.file.Files.exists(patchDirPath)) {
+                java.nio.file.Files.createDirectories(patchDirPath);
+            }
+
+            // 批量修复
+            printer.header("Starting Batch Auto-Fix");
+            printer.blank();
+
+            int successCount = 0;
+            int failureCount = 0;
+            java.util.List<FixSummary> fixSummaries = new java.util.ArrayList<>();
+
+            for (int i = 0; i < issuesToFix.size(); i++) {
+                com.harmony.agent.core.model.SecurityIssue issue = issuesToFix.get(i);
+                int displayIndex = issueNumber != null ? issueNumber : allIssues.indexOf(issue);
+
+                printer.subheader("Issue #" + displayIndex + " (" + (i + 1) + "/" + issuesToFix.size() + ")");
+                printer.keyValue("  Title", issue.getTitle());
+                printer.keyValue("  Location", issue.getLocation().toString());
+                printer.keyValue("  Severity", issue.getSeverity().getDisplayName());
+                printer.blank();
+
+                try {
+                    // 生成修复（最多重试 3 次）
+                    printer.spinner("Generating fix (with compilation validation)...", false);
+                    PendingChange pendingChange = autoFixOrchestrator.generateFix(issue, 3);
+                    printer.spinner("Generating fix", true);
+                    printer.blank();
+
+                    printer.success("✅ Fix generated successfully!");
+                    printer.info("  " + pendingChange.getSummary());
+                    printer.blank();
+
+                    // 应用修复
+                    if (outputMode.equals("patch") || outputMode.equals("both")) {
+                        String patchFileName = generatePatchFileName(issue, displayIndex);
+                        java.nio.file.Path patchFilePath = patchDirPath.resolve(patchFileName);
+                        generatePatchFile(pendingChange, patchFilePath);
+                        printer.success("  ✓ Patch file: " + patchFilePath);
+                    }
+
+                    if (outputMode.equals("direct") || outputMode.equals("both")) {
+                        changeManager.setPendingChange(pendingChange);
+                        AppliedChange appliedChange = changeManager.acceptPendingChange();
+                        printer.success("  ✓ Applied to: " + appliedChange.getFilePath());
+                    }
+
+                    successCount++;
+                    fixSummaries.add(new FixSummary(issue, true, "Fixed successfully"));
+
+                } catch (AutoFixOrchestrator.AutoFixException e) {
+                    failureCount++;
+                    String errorMsg = e.getMessage();
+                    printer.error("❌ Fix failed: " + errorMsg);
+                    fixSummaries.add(new FixSummary(issue, false, errorMsg));
+                }
+
+                printer.blank();
+                if (i < issuesToFix.size() - 1) {
+                    printer.info("─".repeat(80));
+                    printer.blank();
+                }
+            }
+
+            // 打印总结
+            printAutoFixSummary(issuesToFix.size(), successCount, failureCount, fixSummaries);
 
         } catch (Exception e) {
-            printer.error("Failed to process autofix request: " + e.getMessage());
+            printer.error("Auto-fix failed: " + e.getMessage());
             if (parent.isVerbose()) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    /**
+     * 根据严重程度过滤问题
+     */
+    private java.util.List<com.harmony.agent.core.model.SecurityIssue> filterIssuesBySeverity(
+            java.util.List<com.harmony.agent.core.model.SecurityIssue> issues, String minSeverity) {
+
+        com.harmony.agent.core.model.IssueSeverity minSev = parseIssueSeverityString(minSeverity);
+
+        // 严重程度顺序
+        java.util.List<com.harmony.agent.core.model.IssueSeverity> severityOrder = java.util.List.of(
+            com.harmony.agent.core.model.IssueSeverity.CRITICAL,
+            com.harmony.agent.core.model.IssueSeverity.HIGH,
+            com.harmony.agent.core.model.IssueSeverity.MEDIUM,
+            com.harmony.agent.core.model.IssueSeverity.LOW,
+            com.harmony.agent.core.model.IssueSeverity.INFO
+        );
+
+        int minIndex = severityOrder.indexOf(minSev);
+
+        return issues.stream()
+            .filter(issue -> {
+                int issueIndex = severityOrder.indexOf(issue.getSeverity());
+                return issueIndex <= minIndex;
+            })
+            .sorted(java.util.Comparator.comparing(issue -> severityOrder.indexOf(issue.getSeverity())))
+            .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * 解析严重程度字符串
+     */
+    private com.harmony.agent.core.model.IssueSeverity parseIssueSeverityString(String severity) {
+        return switch (severity.toLowerCase()) {
+            case "critical" -> com.harmony.agent.core.model.IssueSeverity.CRITICAL;
+            case "high" -> com.harmony.agent.core.model.IssueSeverity.HIGH;
+            case "medium" -> com.harmony.agent.core.model.IssueSeverity.MEDIUM;
+            case "low" -> com.harmony.agent.core.model.IssueSeverity.LOW;
+            default -> com.harmony.agent.core.model.IssueSeverity.HIGH;
+        };
+    }
+
+    /**
+     * 生成补丁文件名
+     */
+    private String generatePatchFileName(com.harmony.agent.core.model.SecurityIssue issue, int index) {
+        String timestamp = java.time.LocalDateTime.now().format(
+            java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String severity = issue.getSeverity().name().toLowerCase();
+        String sanitizedTitle = issue.getTitle()
+            .replaceAll("[^a-zA-Z0-9_-]", "_")
+            .replaceAll("_{2,}", "_")
+            .toLowerCase();
+
+        return String.format("issue_%d_%s_%s_%s.patch",
+            index, severity, sanitizedTitle, timestamp);
+    }
+
+    /**
+     * 生成 .patch 文件
+     */
+    private void generatePatchFile(PendingChange change, java.nio.file.Path patchFilePath)
+            throws java.io.IOException {
+
+        StringBuilder patchContent = new StringBuilder();
+
+        // 补丁头部
+        patchContent.append("# Auto-generated patch by HarmonySafeAgent\n");
+        patchContent.append("# Generated at: ").append(java.time.LocalDateTime.now().format(
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
+        patchContent.append("# Issue: ").append(change.getIssue().getTitle()).append("\n");
+        patchContent.append("# Severity: ").append(change.getIssue().getSeverity().getDisplayName()).append("\n");
+        patchContent.append("# File: ").append(change.getFilePath()).append("\n");
+        patchContent.append("# Location: Line ").append(change.getStartLine())
+            .append("-").append(change.getEndLine()).append("\n");
+        patchContent.append("#\n\n");
+
+        // 标准 unified diff 格式
+        patchContent.append("--- a/").append(change.getFilePath()).append("\n");
+        patchContent.append("+++ b/").append(change.getFilePath()).append("\n");
+        patchContent.append("@@ -").append(change.getStartLine())
+            .append(",").append(change.getOldCode().split("\n").length)
+            .append(" +").append(change.getStartLine())
+            .append(",").append(change.getNewCode().split("\n").length)
+            .append(" @@\n");
+
+        // 删除的行
+        for (String line : change.getOldCode().split("\n")) {
+            patchContent.append("-").append(line).append("\n");
+        }
+
+        // 添加的行
+        for (String line : change.getNewCode().split("\n")) {
+            patchContent.append("+").append(line).append("\n");
+        }
+
+        // 写入文件
+        java.nio.file.Files.writeString(patchFilePath, patchContent.toString(),
+            java.nio.charset.StandardCharsets.UTF_8,
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    /**
+     * 打印自动修复总结
+     */
+    private void printAutoFixSummary(int total, int success, int failure,
+                                     java.util.List<FixSummary> summaries) {
+        printer.header("Auto-Fix Summary");
+        printer.blank();
+
+        printer.keyValue("  Total Issues", String.valueOf(total));
+        printer.keyValue("  Successfully Fixed", String.valueOf(success));
+        printer.keyValue("  Failed to Fix", String.valueOf(failure));
+        printer.blank();
+
+        if (success > 0) {
+            printer.success(String.format("✅ Successfully fixed %d out of %d issue(s)!",
+                success, total));
+        }
+
+        if (failure > 0) {
+            printer.warning(String.format("⚠️  %d issue(s) could not be fixed:", failure));
+            for (FixSummary summary : summaries) {
+                if (!summary.success) {
+                    printer.warning("  - " + summary.issue.getTitle() + ": " + summary.reason);
+                }
+            }
+        }
+
+        printer.blank();
+        printer.info("💡 Tip: Apply patches using: git apply patches/*.patch");
+    }
+
+    /**
+     * 修复结果摘要
+     */
+    private static class FixSummary {
+        final com.harmony.agent.core.model.SecurityIssue issue;
+        final boolean success;
+        final String reason;
+
+        FixSummary(com.harmony.agent.core.model.SecurityIssue issue, boolean success, String reason) {
+            this.issue = issue;
+            this.success = success;
+            this.reason = reason;
         }
     }
 
@@ -1167,7 +1486,9 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.keyValue("  /analyze <path> --strategic", "Strategic analysis with scoring & triage (NEW!)");
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
+        printer.keyValue("  /review <path>", "AI-powered code review (NEW!)");
         printer.info("  💡 Strategic analysis includes T1.1 Security Scoring + T1.2 Triage Advisor");
+        printer.info("  💡 Code review finds bugs, security issues, and improves code quality");
         printer.blank();
 
         printer.subheader("Auto-Fix (NEW!)");

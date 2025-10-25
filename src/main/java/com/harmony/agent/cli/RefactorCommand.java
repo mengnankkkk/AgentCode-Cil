@@ -3,6 +3,8 @@ package com.harmony.agent.cli;
 import com.harmony.agent.config.AppConfig;
 import com.harmony.agent.config.ConfigManager;
 import com.harmony.agent.core.ai.CodeSlicer;
+import com.harmony.agent.core.ai.RustCodeGenerator;
+import com.harmony.agent.core.ai.RustCodeValidator;
 import com.harmony.agent.core.ai.RustMigrationAdvisor;
 import com.harmony.agent.core.ai.SecuritySuggestionAdvisor;
 import com.harmony.agent.core.model.IssueSeverity;
@@ -19,12 +21,20 @@ import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Refactor command - generates code refactoring suggestions and Rust migration advice
@@ -285,59 +295,65 @@ public class RefactorCommand implements Callable<Integer> {
 
     private int handleRustMigration(ConsolePrinter printer) {
         try {
-            // 验证必需参数
-            if (targetFile == null || lineNumber == null) {
-                printer.error("Rust migration requires --file and --line options");
+            // 解析基础路径（必须是目录）
+            Path basePath = Paths.get(sourcePath).toAbsolutePath().normalize();
+
+            if (!Files.exists(basePath)) {
+                printer.error("Source path does not exist: " + sourcePath);
+                return 1;
+            }
+
+            if (!Files.isDirectory(basePath)) {
+                printer.error("Source path must be a directory for batch conversion: " + sourcePath);
+                printer.info("Usage: harmony-agent refactor <source-directory> --type rust-migration -o <output-dir>");
+                return 1;
+            }
+
+            // 验证输出目录
+            if (outputDir == null) {
+                printer.error("Output directory is required for Rust migration");
                 printer.blank();
                 printer.info("Usage:");
-                printer.info("  harmony-agent refactor <source-path> --type rust-migration -f <file> -l <line>");
+                printer.info("  harmony-agent refactor <source-directory> --type rust-migration -o <output-dir>");
                 printer.blank();
                 printer.info("Example:");
-                printer.info("  harmony-agent refactor /path/to/bzip2 --type rust-migration -f bzlib.c -l 234");
+                printer.info("  harmony-agent refactor /path/to/bzip2 --type rust-migration -o /path/to/bzip2-rust");
                 return 1;
             }
 
-            // 解析文件路径
-            Path basePath = Paths.get(sourcePath).toAbsolutePath().normalize();
-            Path filePath;
+            Path outputPath = Paths.get(outputDir).toAbsolutePath().normalize();
 
-            // 判断targetFile是相对路径还是绝对路径
-            Path targetPath = Paths.get(targetFile);
-            if (targetPath.isAbsolute()) {
-                filePath = targetPath;
-            } else {
-                // 如果sourcePath是文件，使用其父目录；如果是目录，直接使用
-                if (Files.isRegularFile(basePath)) {
-                    Path parentDir = basePath.getParent();
-                    if (parentDir == null) {
-                        parentDir = Paths.get(".").toAbsolutePath().normalize();
-                    }
-                    filePath = parentDir.resolve(targetFile);
-                } else {
-                    filePath = basePath.resolve(targetFile);
-                }
+            // 创建输出目录（如果不存在）
+            if (!Files.exists(outputPath)) {
+                Files.createDirectories(outputPath);
+                printer.info("Created output directory: " + outputPath);
             }
 
-            // 验证文件存在
-            if (!Files.exists(filePath)) {
-                printer.error("File not found: " + filePath);
-                printer.info("Looking in: " + filePath.toAbsolutePath());
-                return 1;
+            // 1. 扫描所有 C/C++ 文件
+            printer.blank();
+            printer.header("Scanning for C/C++ Files");
+            printer.info("Source directory: " + basePath);
+            printer.blank();
+
+            List<Path> cFiles = scanCppFiles(basePath);
+
+            if (cFiles.isEmpty()) {
+                printer.warning("No C/C++ files found in: " + basePath);
+                return 0;
             }
 
-            if (!Files.isRegularFile(filePath)) {
-                printer.error("Not a regular file: " + filePath);
-                return 1;
+            printer.success("Found " + cFiles.size() + " C/C++ file(s):");
+            for (int i = 0; i < cFiles.size(); i++) {
+                printer.info("  [" + (i + 1) + "] " + basePath.relativize(cFiles.get(i)));
             }
+            printer.blank();
 
-            // 获取配置管理器
+            // 2. 设置 LLM 提供者
             ConfigManager configManager = parent.getConfigManager();
-
-            // 获取命令配置（优先）或使用默认的 ai.model
             String providerName = configManager.getConfig().getAi().getProvider();
             String model = configManager.getConfig().getAi().getModel();
 
-            // 检查是否有命令级别的配置
+            // 检查命令级别配置
             AppConfig.CommandConfig commandConfig = configManager.getConfig().getAi().getCommands().get("refactor");
             if (commandConfig != null) {
                 if (commandConfig.getProvider() != null) {
@@ -348,10 +364,10 @@ public class RefactorCommand implements Callable<Integer> {
                 }
             }
 
-            // 解析模型别名（如 fast, standard, coder 等）
+            // 解析模型别名
             model = resolveModelAlias(configManager, providerName, model);
 
-            // 创建LLMProvider
+            // 创建 LLMProvider
             String openaiKey = System.getenv("OPENAI_API_KEY");
             if (openaiKey == null || openaiKey.isEmpty()) {
                 openaiKey = configManager.getConfig().getAi().getApiKey();
@@ -368,63 +384,340 @@ public class RefactorCommand implements Callable<Integer> {
                 printer.error("LLM provider not configured: " + providerName);
                 printer.blank();
                 printer.info("Available providers: openai, claude, siliconflow");
-                printer.info("Please configure API keys:");
-                printer.info("  - Set OPENAI_API_KEY environment variable, or");
-                printer.info("  - Set CLAUDE_API_KEY environment variable, or");
-                printer.info("  - Set SILICONFLOW_API_KEY environment variable, or");
-                printer.info("  - Configure in config.yaml");
+                printer.info("Please set API keys (OPENAI_API_KEY, CLAUDE_API_KEY, or SILICONFLOW_API_KEY)");
                 return 1;
             }
 
             if (!provider.isAvailable()) {
                 printer.error("LLM provider not available: " + providerName);
-                printer.blank();
-                printer.info("Please configure API keys:");
-                printer.info("  - OpenAI: Set OPENAI_API_KEY environment variable");
-                printer.info("  - Claude: Set CLAUDE_API_KEY environment variable");
-                printer.info("  - Or configure in config.yaml under ai.api_key");
+                printer.info("Please set API key environment variable");
                 return 1;
             }
 
-            // 创建RustMigrationAdvisor
-            CodeSlicer codeSlicer = new CodeSlicer();
-            RustMigrationAdvisor advisor = new RustMigrationAdvisor(provider, codeSlicer, model);
+            // 创建 RustCodeGenerator
+            RustCodeGenerator rustGenerator = new RustCodeGenerator(provider, model);
 
-            // 显示分析开始
-            printer.header("Rust Migration Analysis");
-            printer.info("File: " + filePath.getFileName());
-            printer.info("Line: " + lineNumber);
+            // 创建 RustCodeValidator
+            RustCodeValidator rustValidator = new RustCodeValidator();
+
+            // 检查 Rust 工具链是否可用
+            boolean rustcAvailable = rustValidator.isRustcAvailable();
+            boolean clippyAvailable = rustValidator.isClippyAvailable();
+
+            if (!rustcAvailable) {
+                printer.warning("⚠️  rustc not found - code validation will be skipped");
+                printer.info("Install Rust: https://rustup.rs/");
+                printer.blank();
+            }
+
+            if (!clippyAvailable) {
+                printer.warning("⚠️  clippy not found - style checking will be skipped");
+                printer.info("Install clippy: rustup component add clippy");
+                printer.blank();
+            }
+
+            printer.header("Rust Code Generation");
             printer.info("Provider: " + provider.getProviderName());
             printer.info("Model: " + model);
+            printer.info("Output directory: " + outputPath);
+            printer.info("Validation: " + (rustcAvailable ? "✓ rustc" : "✗ rustc") +
+                         ", " + (clippyAvailable ? "✓ clippy" : "✗ clippy"));
             printer.blank();
 
-            // 生成建议
-            printer.spinner("Analyzing C code and generating Rust migration advice...", false);
-            String suggestion = advisor.getMigrationSuggestion(filePath, lineNumber);
-            printer.spinner("Analysis complete", true);
+            // 3. 逐文件处理循环
+            int successCount = 0;
+            int skippedCount = 0;
+            List<Path> convertedFiles = new ArrayList<>();
 
-            printer.blank();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
 
-            // 输出建议
-            if (suggestion.startsWith("❌")) {
-                printer.error(suggestion);
-                return 1;
-            } else {
-                // 直接输出Markdown内容（不添加额外格式）
-                System.out.println(suggestion);
+            for (int i = 0; i < cFiles.size(); i++) {
+                Path cFile = cFiles.get(i);
+                Path relativePath = basePath.relativize(cFile);
+
+                printer.subheader("File " + (i + 1) + " / " + cFiles.size() + ": " + relativePath);
                 printer.blank();
-                printer.success("Migration suggestion generated successfully");
+
+                // ===== [G] Generate: 生成 Rust 代码 =====
+                printer.info("🔄 [G] Generating Rust code...");
+                String rustCode = rustGenerator.generateRustCode(cFile);
+
+                // 检查是否生成成功
+                if (rustCode.startsWith("// ERROR:")) {
+                    printer.error("Failed to generate Rust code:");
+                    printer.error(rustCode);
+                    printer.blank();
+
+                    // 询问是否继续
+                    printer.warning("Continue with next file? (y/n): ");
+                    String response = reader.readLine().trim().toLowerCase();
+                    if (!response.equals("y") && !response.equals("yes")) {
+                        printer.info("Conversion aborted by user");
+                        break;
+                    }
+                    continue;
+                }
+
+                printer.success("✓ Code generated (" + rustCode.split("\n").length + " lines)");
                 printer.blank();
-                printer.info("💡 Tip: Copy the Rust code above and adapt it to your project");
-                return 0;
+
+                // ===== [V] + [I] Verify & Iterate: 验证和迭代修复 =====
+                int maxIterations = 3;
+                int iteration = 0;
+                boolean validated = false;
+
+                if (rustcAvailable) {
+                    // 创建临时文件用于验证
+                    Path tempFile = Files.createTempFile("rust_validation_", ".rs");
+
+                    try {
+                        while (iteration < maxIterations && !validated) {
+                            iteration++;
+
+                            if (iteration > 1) {
+                                printer.info("🔄 [I] Iteration " + iteration + ": Attempting to fix errors...");
+                            } else {
+                                printer.info("🔍 [V] Validating with rustc...");
+                            }
+
+                            // 验证编译
+                            RustCodeValidator.ValidationResult rustcResult =
+                                rustValidator.validateWithRustc(rustCode, tempFile);
+
+                            if (rustcResult.isSuccess()) {
+                                printer.success("✓ rustc validation passed");
+                                validated = true;
+
+                                // 如果 clippy 可用，也进行检查
+                                if (clippyAvailable) {
+                                    printer.info("🔍 Running clippy checks...");
+                                    RustCodeValidator.ValidationResult clippyResult =
+                                        rustValidator.validateWithClippy(rustCode, tempFile);
+
+                                    if (clippyResult.hasWarnings()) {
+                                        printer.warning("⚠️  Clippy found " + clippyResult.getWarningCount() + " warning(s)");
+
+                                        // 显示前 5 个警告
+                                        List<String> warnings = clippyResult.getWarnings();
+                                        for (int w = 0; w < Math.min(5, warnings.size()); w++) {
+                                            printer.warning("  " + warnings.get(w));
+                                        }
+
+                                        if (warnings.size() > 5) {
+                                            printer.info("  ... and " + (warnings.size() - 5) + " more warnings");
+                                        }
+
+                                        // 尝试修复 clippy 警告
+                                        if (iteration < maxIterations) {
+                                            printer.info("🔄 Attempting to fix clippy warnings...");
+                                            String fixedCode = rustGenerator.fixCompilationErrors(
+                                                rustCode, "", clippyResult.getFullOutput());
+
+                                            if (!fixedCode.startsWith("// ERROR:")) {
+                                                rustCode = fixedCode;
+                                                validated = false; // 重新验证
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        printer.success("✓ Clippy checks passed");
+                                    }
+                                }
+
+                                break;
+                            } else {
+                                // 编译失败
+                                printer.error("✗ rustc validation failed (" +
+                                    rustcResult.getErrorCount() + " error(s))");
+
+                                // 显示前 5 个错误
+                                List<String> errors = rustcResult.getErrors();
+                                for (int e = 0; e < Math.min(5, errors.size()); e++) {
+                                    printer.error("  " + errors.get(e));
+                                }
+
+                                if (errors.size() > 5) {
+                                    printer.info("  ... and " + (errors.size() - 5) + " more errors");
+                                }
+                                printer.blank();
+
+                                // 如果还有迭代机会，尝试修复
+                                if (iteration < maxIterations) {
+                                    String fixedCode = rustGenerator.fixCompilationErrors(
+                                        rustCode,
+                                        rustcResult.getFullOutput(),
+                                        null);
+
+                                    if (fixedCode.startsWith("// ERROR:")) {
+                                        printer.error("Failed to fix errors: " + fixedCode);
+                                        break;
+                                    }
+
+                                    rustCode = fixedCode;
+                                    printer.success("✓ Fixed code generated, re-validating...");
+                                    printer.blank();
+                                } else {
+                                    printer.warning("⚠️  Maximum iterations reached, code may have errors");
+                                    break;
+                                }
+                            }
+                        }
+                    } finally {
+                        // 清理临时文件
+                        rustValidator.cleanupTempFile(tempFile);
+                    }
+
+                    printer.blank();
+
+                    if (validated) {
+                        printer.success("✓ Code quality: VALIDATED (iteration " + iteration + ")");
+                    } else {
+                        printer.warning("⚠️  Code quality: NOT VALIDATED (may have compilation errors)");
+                    }
+                } else {
+                    printer.warning("⚠️  Validation skipped (rustc not available)");
+                }
+
+                printer.blank();
+
+                // ===== [U] User Confirmation: 用户确认 =====
+                // 显示生成的代码（前30行）
+                displayCodePreview(printer, rustCode, 30);
+                printer.blank();
+
+                // 用户确认
+                boolean accepted = false;
+                while (true) {
+                    printer.info("Options: [a]ccept / [s]kip / [v]iew full / [q]uit: ");
+                    String choice = reader.readLine().trim().toLowerCase();
+
+                    if (choice.equals("a") || choice.equals("accept")) {
+                        accepted = true;
+                        break;
+                    } else if (choice.equals("s") || choice.equals("skip")) {
+                        accepted = false;
+                        break;
+                    } else if (choice.equals("v") || choice.equals("view")) {
+                        printer.blank();
+                        System.out.println(rustCode);
+                        printer.blank();
+                        continue;
+                    } else if (choice.equals("q") || choice.equals("quit")) {
+                        printer.info("Conversion aborted by user");
+                        printer.blank();
+                        printSummary(printer, successCount, skippedCount, cFiles.size());
+                        return 0;
+                    } else {
+                        printer.warning("Invalid choice. Please enter a, s, v, or q");
+                        continue;
+                    }
+                }
+
+                if (accepted) {
+                    // 写入文件
+                    Path rustFileName = Paths.get(relativePath.toString().replaceAll("\\.(c|cpp|h|hpp)$", ".rs"));
+                    Path rustFilePath = outputPath.resolve(rustFileName);
+
+                    // 创建父目录（如果需要）
+                    Files.createDirectories(rustFilePath.getParent());
+
+                    // 写入 Rust 代码
+                    Files.writeString(rustFilePath, rustCode, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+                    printer.success("✓ Saved: " + rustFilePath);
+                    printer.blank();
+
+                    convertedFiles.add(rustFilePath);
+                    successCount++;
+                } else {
+                    printer.info("✗ Skipped: " + relativePath);
+                    printer.blank();
+                    skippedCount++;
+                }
             }
 
-        } catch (Exception e) {
-            printer.error("Failed to generate Rust migration suggestion: " + e.getMessage());
+            // 打印总结
+            printSummary(printer, successCount, skippedCount, cFiles.size());
+
+            // 生成 Cargo.toml 如果有文件被转换
+            if (successCount > 0) {
+                printer.blank();
+                printer.info("💡 Tip: Generate Cargo.toml to build the Rust project:");
+                printer.info("    cd " + outputPath);
+                printer.info("    cargo init --name " + basePath.getFileName());
+            }
+
+            return 0;
+
+        } catch (IOException e) {
+            printer.error("I/O error: " + e.getMessage());
             if (parent.isVerbose()) {
                 e.printStackTrace();
             }
             return 1;
+        } catch (Exception e) {
+            printer.error("Failed to perform Rust migration: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+            return 1;
+        }
+    }
+
+    /**
+     * 扫描目录中所有的 C/C++ 文件
+     */
+    private List<Path> scanCppFiles(Path directory) throws IOException {
+        try (Stream<Path> paths = Files.walk(directory)) {
+            return paths
+                .filter(Files::isRegularFile)
+                .filter(p -> {
+                    String name = p.getFileName().toString().toLowerCase();
+                    return name.endsWith(".c") || name.endsWith(".cpp") ||
+                           name.endsWith(".h") || name.endsWith(".hpp");
+                })
+                .sorted()
+                .collect(Collectors.toList());
+        }
+    }
+
+    /**
+     * 显示代码预览（前 N 行）
+     */
+    private void displayCodePreview(ConsolePrinter printer, String code, int maxLines) {
+        String[] lines = code.split("\n");
+        int displayLines = Math.min(lines.length, maxLines);
+
+        printer.info("Generated Rust code preview (showing " + displayLines + " / " + lines.length + " lines):");
+        printer.blank();
+
+        for (int i = 0; i < displayLines; i++) {
+            System.out.println(lines[i]);
+        }
+
+        if (lines.length > maxLines) {
+            printer.blank();
+            printer.info("... (" + (lines.length - maxLines) + " more lines)");
+        }
+    }
+
+    /**
+     * 打印转换总结
+     */
+    private void printSummary(ConsolePrinter printer, int success, int skipped, int total) {
+        printer.header("Conversion Summary");
+        printer.blank();
+        printer.keyValue("  Total files", String.valueOf(total));
+        printer.keyValue("  Converted", String.valueOf(success));
+        printer.keyValue("  Skipped", String.valueOf(skipped));
+        printer.keyValue("  Remaining", String.valueOf(total - success - skipped));
+        printer.blank();
+
+        if (success > 0) {
+            printer.success("✓ Successfully converted " + success + " file(s) to Rust!");
+        } else {
+            printer.warning("No files were converted");
         }
     }
 

@@ -233,8 +233,14 @@ public class AppConfig {
      */
     public static class CacheConfig {
         private boolean enabled = true;
-        private int ttl = 3600;
+        private int ttl = 3600;  // L1 cache TTL in seconds (default: 1 hour)
         private int maxSize = 100;
+        private String type = "ai_llm_calls";  // Cache type identifier for PersistentCacheManager
+        private int l2TtlDays = 7;  // L2 cache TTL in days (default: 7 days)
+
+        // LLM cache specific
+        private boolean llmCacheEnabled = true;  // Enable LLM provider cache
+        private String llmCacheType = "ai_llm_calls";  // Cache type for LLM calls
 
         // Getters and setters
         public boolean isEnabled() { return enabled; }
@@ -245,6 +251,18 @@ public class AppConfig {
 
         public int getMaxSize() { return maxSize; }
         public void setMaxSize(int maxSize) { this.maxSize = maxSize; }
+
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+
+        public int getL2TtlDays() { return l2TtlDays; }
+        public void setL2TtlDays(int l2TtlDays) { this.l2TtlDays = l2TtlDays; }
+
+        public boolean isLlmCacheEnabled() { return llmCacheEnabled; }
+        public void setLlmCacheEnabled(boolean llmCacheEnabled) { this.llmCacheEnabled = llmCacheEnabled; }
+
+        public String getLlmCacheType() { return llmCacheType; }
+        public void setLlmCacheType(String llmCacheType) { this.llmCacheType = llmCacheType; }
     }
 
     // Main config getters and setters

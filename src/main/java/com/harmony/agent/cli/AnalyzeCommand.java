@@ -68,10 +68,10 @@ public class AnalyzeCommand implements Callable<Integer> {
     private boolean incremental;
 
     @Option(
-        names = {"--no-ai"},
-        description = "Disable AI-enhanced analysis (use static analysis only)"
+        names = {"--ai"},
+        description = "Enable AI-enhanced analysis (disabled by default, uses static analysis only)"
     )
-    private boolean noAi;
+    private boolean useAi = false;
 
     @Option(
         names = {"--compile-commands"},
@@ -159,7 +159,7 @@ public class AnalyzeCommand implements Callable<Integer> {
                     config.getAnalysis().getMaxThreads(),
                     config.getAnalysis().getTimeout(),
                     compileCommandsPath,
-                    !noAi,  // AI enhancement enabled unless --no-ai flag
+                    useAi,  // AI enhancement disabled by default, enable with --ai flag
                     outputFile
                 );
             } else {
@@ -171,7 +171,7 @@ public class AnalyzeCommand implements Callable<Integer> {
                     config.getAnalysis().getMaxThreads(),
                     config.getAnalysis().getTimeout(),
                     compileCommandsPath,
-                    !noAi  // AI enhancement enabled unless --no-ai flag
+                    useAi  // AI enhancement disabled by default, enable with --ai flag
                 );
             }
             AnalysisEngine engine = new AnalysisEngine(sourcePath, analysisConfig);

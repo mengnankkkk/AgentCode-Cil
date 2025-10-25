@@ -31,7 +31,9 @@
       "Bash(python /tmp/fix_ai_percentage.py:*)",
       "Bash(python /tmp/fix_endtime.py:*)",
       "Read(//tmp/**)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "mcp__open-websearch__fetchGithubReadme",
+      "mcp__open-websearch__search"
     ],
     "deny": [],
     "ask": []

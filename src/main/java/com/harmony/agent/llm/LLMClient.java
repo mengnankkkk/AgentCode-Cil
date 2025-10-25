@@ -113,7 +113,20 @@ public class LLMClient {
             }
         }
 
-        return ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey, nhhKey);
+        // Create factory and enable cache if configured
+        ProviderFactory factory = ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey, nhhKey);
+
+        // Configure LLM cache from config
+        AppConfig.CacheConfig cacheConfig = configManager.getConfig().getCache();
+        if (cacheConfig.isLlmCacheEnabled()) {
+            factory.enableCache(true);
+            factory.setCacheType(cacheConfig.getLlmCacheType());
+            logger.info("LLM Provider cache enabled (type: {})", cacheConfig.getLlmCacheType());
+        } else {
+            logger.info("LLM Provider cache disabled by configuration");
+        }
+
+        return factory;
     }
 
     /**

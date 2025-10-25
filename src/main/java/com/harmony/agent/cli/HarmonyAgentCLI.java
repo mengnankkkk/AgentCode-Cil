@@ -23,6 +23,7 @@ import java.util.concurrent.Callable;
         StrategicAnalysisCommand.class,  // NEW: Strategic analysis with scoring and triage
         SuggestCommand.class,
         RefactorCommand.class,
+        ReviewCommand.class,             // NEW: AI-powered code review
         ReportCommand.class,
         ConfigCommand.class,
         CacheStatsCommand.class  // ✨ P1 Optimization: Cache statistics
