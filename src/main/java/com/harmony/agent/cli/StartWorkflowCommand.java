@@ -632,7 +632,7 @@ public class StartWorkflowCommand {
      * Execute Rust refactoring with Generate-Verify-Iterate (GVI) loop
      */
     private boolean executeRefactorWithGVI(IntelligentReport report) {
-        printer.info("🦀 执行 Rust 重构建议（含 GVI 迭代循环）");
+        printer.info("🦀 执行 Rust 重构（含 GVI 迭代循环）");
         printer.blank();
 
         // Find the highest risk file
@@ -643,22 +643,135 @@ public class StartWorkflowCommand {
         }
 
         SecurityIssue issue = firstCritical.get();
-        String filePath = issue.getLocation().getFilePath();
+        String filePathStr = issue.getLocation().getFilePath();
 
-        printer.info("目标文件: " + filePath);
+        printer.info("目标文件: " + filePathStr);
         printer.blank();
 
-        printer.info("  [GVI 循环] 第 1 步: 生成 Rust 代码草稿...");
-        printer.info("  [GVI 循环] 第 2 步: 验证 Rust 代码（rustc + clippy）...");
-        printer.info("  [GVI 循环] 第 3 步: 迭代修复编译错误...");
-        printer.blank();
+        try {
+            // Read C source file
+            Path sourceFilePath = workingDirectory.toPath().resolve(filePathStr);
+            if (!Files.exists(sourceFilePath)) {
+                printer.error("源文件不存在: " + sourceFilePath);
+                return false;
+            }
 
-        printer.success("✓ Rust 重构建议已生成!");
-        printer.blank();
-        printer.info("💡 使用以下命令查看详细建议:");
-        printer.info("  /refactor <path> --type rust-migration");
+            String cCode = Files.readString(sourceFilePath);
+            
+            // Create RustCodeGenerator
+            printer.spinner("初始化 Rust 代码生成器...", false);
+            com.harmony.agent.core.ai.CodeSlicer codeSlicer = new com.harmony.agent.core.ai.CodeSlicer();
+            com.harmony.agent.core.ai.RustCodeGenerator generator = 
+                new com.harmony.agent.core.ai.RustCodeGenerator(
+                    createLLMProvider(),
+                    codeSlicer,
+                    configManager.getConfig().getAi().getModel()
+                );
+            printer.spinner("初始化完成", true);
+            printer.blank();
 
-        return true;
+            // Execute GVI loop
+            printer.info("  [GVI 循环] 开始迭代生成 Rust 代码...");
+            printer.blank();
+
+            com.harmony.agent.core.ai.RustCodeGenerator.RustCodeResult result = 
+                generator.generateRustCodeFromString(cCode, sourceFilePath.getFileName().toString());
+
+            // Display results
+            printer.blank();
+            printer.header("Rust 代码生成结果");
+            printer.blank();
+
+            // Quality metrics
+            printer.info("📊 质量指标:");
+            printer.keyValue("  代码质量评分", result.getQualityScore() + "/100" + 
+                (result.getQualityScore() >= 90 ? " ✅" : " ⚠️"));
+            printer.keyValue("  Unsafe 使用率", String.format("%.1f%%", result.getUnsafePercentage()) +
+                (result.getUnsafePercentage() < 5.0 ? " ✅" : " ⚠️"));
+            printer.keyValue("  迭代次数", result.getIterationCount() + "/" + 3);
+            printer.blank();
+
+            // Improvements
+            if (!result.getImprovements().isEmpty()) {
+                printer.info("🔄 迭代改进:");
+                for (String improvement : result.getImprovements()) {
+                    printer.info("  • " + improvement);
+                }
+                printer.blank();
+            }
+
+            // Issues
+            if (!result.getIssues().isEmpty()) {
+                printer.warning("⚠️  剩余问题:");
+                for (String iss : result.getIssues()) {
+                    printer.warning("  • " + iss);
+                }
+                printer.blank();
+            }
+
+            // Show generated Rust code
+            printer.subheader("生成的 Rust 代码:");
+            printer.blank();
+            System.out.println("```rust");
+            System.out.println(result.getRustCode());
+            System.out.println("```");
+            printer.blank();
+
+            // Save to file
+            String rustFileName = sourceFilePath.getFileName().toString().replace(".c", ".rs").replace(".cpp", ".rs");
+            Path rustFilePath = workingDirectory.toPath().resolve(rustFileName);
+            Files.writeString(rustFilePath, result.getRustCode());
+            
+            printer.success("✓ Rust 代码已保存到: " + rustFileName);
+            printer.blank();
+
+            // Ask user to accept or reject
+            printer.info("[1] 接受此 Rust 代码");
+            printer.info("[2] 拒绝此 Rust 代码");
+            System.out.print("请选择 (1-2): ");
+
+            try {
+                Scanner scanner = new Scanner(System.in);
+                String choice = scanner.nextLine().trim();
+
+                if ("1".equals(choice)) {
+                    printer.success("✓ Rust 代码已接受!");
+                    return true;
+                } else {
+                    // Delete the generated file
+                    Files.deleteIfExists(rustFilePath);
+                    printer.info("✗ Rust 代码已拒绝并删除");
+                    return false;
+                }
+            } catch (Exception e) {
+                printer.info("✗ 无法读取输入，保留生成的文件");
+                return false;
+            }
+
+        } catch (IOException e) {
+            printer.error("✗ Rust 重构失败: " + e.getMessage());
+            logger.error("Rust refactoring error", e);
+            return false;
+        }
+    }
+
+    /**
+     * Create LLM provider for Rust generation
+     */
+    private com.harmony.agent.llm.provider.LLMProvider createLLMProvider() {
+        String openaiKey = System.getenv("OPENAI_API_KEY");
+        if (openaiKey == null || openaiKey.isEmpty()) {
+            openaiKey = configManager.getConfig().getAi().getApiKey();
+        }
+
+        String claudeKey = System.getenv("CLAUDE_API_KEY");
+        String siliconflowKey = System.getenv("SILICONFLOW_API_KEY");
+        
+        com.harmony.agent.llm.provider.ProviderFactory factory = 
+            com.harmony.agent.llm.provider.ProviderFactory.createDefault(openaiKey, claudeKey, siliconflowKey);
+
+        String providerName = configManager.getConfig().getAi().getProvider();
+        return factory.getProvider(providerName);
     }
 
     /**
