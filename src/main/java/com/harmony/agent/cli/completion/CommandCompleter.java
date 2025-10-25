@@ -24,6 +24,8 @@ public class CommandCompleter implements Completer {
 
     // Slash commands
     private static final List<CommandInfo> COMMANDS = List.of(
+        // AI Workflow
+        new CommandInfo("/start", "Start complete AI-powered security workflow", true),
         // Task Planning
         new CommandInfo("/plan", "Break down requirement into tasks", false),
         new CommandInfo("/next", "Execute current task", false),

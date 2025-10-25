@@ -250,10 +250,11 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.header("HarmonySafeAgent Interactive Mode");
         printer.blank();
         printer.info("Welcome! You can:");
+        printer.info("  • 🚀 AI Workflow: /start <path> - Complete security workflow (NEW!)");
         printer.info("  • Plan tasks: /plan <requirement> - AI-powered task breakdown");
         printer.info("  • Execute tasks: /next - Intelligent role routing");
         printer.info("  • View tasks: /tasks or Ctrl+T - See all tasks");
-        printer.info("  • Build tools: /compile, /test, /spotbugs - Development tools (NEW!)");
+        printer.info("  • Build tools: /compile, /test, /spotbugs - Development tools");
         printer.info("  • System commands: $ <command> - Execute shell commands");
         printer.info("  • Use commands: /analyze, /suggest, /help, /exit");
         printer.info("  • Chat naturally: Ask questions about security, code, etc.");
@@ -353,6 +354,10 @@ public class InteractiveCommand implements Callable<Integer> {
 
             case "current":
                 handleCurrentTaskCommand();
+                break;
+
+            case "start":
+                handleStartCommand(args);
                 break;
 
             case "analyze":
@@ -574,6 +579,56 @@ public class InteractiveCommand implements Callable<Integer> {
         }
 
         todoListManager.displayCurrentTask();
+    }
+
+    /**
+     * Handle /start command - Complete AI Agent workflow
+     * Phase 1: Deep Analysis & Intelligent Evaluation
+     * Phase 2: Human-AI Collaborative Decision
+     * Phase 3: High-Quality Security Evolution
+     * Phase 4: Review, Acceptance & Feedback Loop
+     */
+    private void handleStartCommand(String args) {
+        if (args.isEmpty()) {
+            printer.error("Usage: /start <path>");
+            printer.info("Example: /start src/main");
+            printer.blank();
+            printer.info("This command initiates a complete AI-powered security workflow:");
+            printer.info("  1. Deep Analysis & Intelligent Evaluation");
+            printer.info("  2. Human-AI Collaborative Decision");
+            printer.info("  3. High-Quality Security Evolution");
+            printer.info("  4. Review, Acceptance & Feedback Loop");
+            return;
+        }
+
+        try {
+            // Create StartWorkflowCommand instance
+            StartWorkflowCommand workflowCmd = new StartWorkflowCommand(
+                printer,
+                configManager,
+                llmClient,
+                currentWorkingDirectory
+            );
+
+            // Execute the workflow
+            int exitCode = workflowCmd.execute(args.trim());
+
+            // Show completion message
+            printer.blank();
+            if (exitCode == 0) {
+                printer.success("✅ Workflow completed successfully!");
+            } else if (exitCode == 2) {
+                printer.warning("⚠️  Workflow completed with critical issues detected");
+            } else {
+                printer.error("❌ Workflow failed with exit code: " + exitCode);
+            }
+
+        } catch (Exception e) {
+            printer.error("Workflow execution failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
     }
 
     /**
@@ -1162,9 +1217,14 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.keyValue("  /current", "Show current task only");
         printer.blank();
 
+        printer.subheader("AI Workflow (NEW!)");
+        printer.keyValue("  /start <path>", "Start complete AI-powered security workflow");
+        printer.info("  💡 Includes: Deep Analysis → Decision → Evolution → Review");
+        printer.blank();
+
         printer.subheader("Analysis & Tools");
         printer.keyValue("  /analyze <path>", "Analyze code for security issues");
-        printer.keyValue("  /analyze <path> --strategic", "Strategic analysis with scoring & triage (NEW!)");
+        printer.keyValue("  /analyze <path> --strategic", "Strategic analysis with scoring & triage");
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
         printer.info("  💡 Strategic analysis includes T1.1 Security Scoring + T1.2 Triage Advisor");
