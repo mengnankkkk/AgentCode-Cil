@@ -64,9 +64,21 @@ public class CodeScanner {
         this.ignorePatterns = new HashSet<>(DEFAULT_IGNORE_PATTERNS);
         this.useGitignore = useGitignore;
 
-        // Detect project type based on directory contents
-        this.projectType = ProjectType.detectFromDirectory(this.basePath.toFile());
-        logger.info("Detected project type: {}", this.projectType.getDisplayName());
+        // Detect project type based on directory contents or file extension
+        File baseFile = this.basePath.toFile();
+        if (baseFile.isFile()) {
+            // If basePath is a file, detect from file extension and use parent directory
+            this.projectType = ProjectType.fromFile(basePath);
+            logger.info("Detected project type from file: {}", this.projectType.getDisplayName());
+        } else if (baseFile.isDirectory()) {
+            // If basePath is a directory, detect from directory contents
+            this.projectType = ProjectType.detectFromDirectory(baseFile);
+            logger.info("Detected project type from directory: {}", this.projectType.getDisplayName());
+        } else {
+            // Path doesn't exist yet or is invalid, default to UNKNOWN
+            this.projectType = ProjectType.UNKNOWN;
+            logger.warn("Path does not exist or is invalid: {}", this.basePath);
+        }
 
         // Set supported extensions based on project type
         this.supportedExtensions = switch (this.projectType) {
@@ -110,12 +122,23 @@ public class CodeScanner {
             return result;
         }
 
-        // Fall back to filesystem scan
-        logger.info("Starting filesystem scan of: {} (looking for {} files)", basePath, projectType.getDisplayName());
-
         if (!Files.exists(basePath)) {
             throw new IOException("Path does not exist: " + basePath);
         }
+
+        // If basePath is a file, return it directly if it's a supported file
+        if (Files.isRegularFile(basePath)) {
+            if (isSupportedFile(basePath)) {
+                logger.info("Single file scan: {}", basePath);
+                return List.of(basePath);
+            } else {
+                logger.warn("File is not a supported file type: {}", basePath);
+                return new ArrayList<>();
+            }
+        }
+
+        // Fall back to filesystem scan
+        logger.info("Starting filesystem scan of: {} (looking for {} files)", basePath, projectType.getDisplayName());
 
         List<Path> files = new ArrayList<>();
 
@@ -187,7 +210,21 @@ public class CodeScanner {
      * Check if path should be ignored based on patterns
      */
     private boolean shouldIgnore(Path path) {
-        String relativePath = basePath.relativize(path).toString();
+        // Get relative path for pattern matching
+        String relativePath;
+        try {
+            // If basePath is a file, use its parent directory for relativization
+            Path baseDir = Files.isRegularFile(basePath) ? basePath.getParent() : basePath;
+            if (baseDir != null) {
+                relativePath = baseDir.relativize(path).toString();
+            } else {
+                relativePath = path.toString();
+            }
+        } catch (IllegalArgumentException e) {
+            // If paths are not on the same filesystem, use absolute path
+            relativePath = path.toString();
+        }
+        
         String fileName = path.getFileName().toString();
 
         for (String pattern : ignorePatterns) {
@@ -218,7 +255,14 @@ public class CodeScanner {
      * Load .gitignore patterns
      */
     private void loadGitignorePatterns() {
-        Path gitignorePath = basePath.resolve(".gitignore");
+        // If basePath is a file, look for .gitignore in its parent directory
+        Path baseDir = Files.isRegularFile(basePath) ? basePath.getParent() : basePath;
+        if (baseDir == null) {
+            logger.debug("No base directory found for .gitignore lookup");
+            return;
+        }
+        
+        Path gitignorePath = baseDir.resolve(".gitignore");
 
         if (!Files.exists(gitignorePath)) {
             logger.debug("No .gitignore file found");
@@ -245,7 +289,12 @@ public class CodeScanner {
      * Check if directory is a git repository
      */
     private boolean isGitRepository() {
-        return Files.exists(basePath.resolve(".git"));
+        // If basePath is a file, check its parent directory for .git
+        Path baseDir = Files.isRegularFile(basePath) ? basePath.getParent() : basePath;
+        if (baseDir == null) {
+            return false;
+        }
+        return Files.exists(baseDir.resolve(".git"));
     }
 
     /**

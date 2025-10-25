@@ -42,10 +42,15 @@ public class JsonReportWriter {
 
         try (FileWriter writer = new FileWriter(outputFile.toFile())) {
             gson.toJson(result, writer);
+            writer.flush();
         }
 
-        logger.info("JSON report written successfully: {} bytes",
-            outputFile.toFile().length());
+        long fileSize = outputFile.toFile().length();
+        logger.info("JSON report written successfully: {} bytes", fileSize);
+        
+        if (fileSize == 0) {
+            logger.error("JSON report file is empty! Check if ScanResult is null or has no data");
+        }
     }
 
     /**

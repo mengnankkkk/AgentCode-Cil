@@ -291,7 +291,7 @@ public class RefactorCommand implements Callable<Integer> {
             }
 
             // 解析文件路径
-            Path basePath = Paths.get(sourcePath);
+            Path basePath = Paths.get(sourcePath).toAbsolutePath().normalize();
             Path filePath;
 
             // 判断targetFile是相对路径还是绝对路径
@@ -299,9 +299,13 @@ public class RefactorCommand implements Callable<Integer> {
             if (targetPath.isAbsolute()) {
                 filePath = targetPath;
             } else {
-                // 如果sourcePath是文件，使用其父目录
+                // 如果sourcePath是文件，使用其父目录；如果是目录，直接使用
                 if (Files.isRegularFile(basePath)) {
-                    filePath = basePath.getParent().resolve(targetFile);
+                    Path parentDir = basePath.getParent();
+                    if (parentDir == null) {
+                        parentDir = Paths.get(".").toAbsolutePath().normalize();
+                    }
+                    filePath = parentDir.resolve(targetFile);
                 } else {
                     filePath = basePath.resolve(targetFile);
                 }
