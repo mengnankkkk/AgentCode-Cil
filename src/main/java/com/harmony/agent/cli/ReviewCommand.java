@@ -8,6 +8,8 @@ import com.harmony.agent.core.model.IssueSeverity;
 import com.harmony.agent.core.model.ScanResult;
 import com.harmony.agent.core.model.SecurityIssue;
 import com.harmony.agent.core.report.JsonReportWriter;
+import com.harmony.agent.core.store.StoreSession;
+import com.harmony.agent.core.store.UnifiedIssueStore;
 import com.harmony.agent.llm.provider.LLMProvider;
 import com.harmony.agent.llm.provider.ProviderFactory;
 import org.slf4j.Logger;
@@ -188,6 +190,9 @@ public class ReviewCommand implements Callable<Integer> {
 
             // 显示审查结果
             displayReviewResult(printer, result);
+
+            // 【NEW】尝试将审查结果写入 UnifiedIssueStore（如果在交互模式中）
+            tryWriteToStore(printer, result);
 
             printer.blank();
             printer.keyValue("  Review Time", String.format("%.2f seconds", duration.toMillis() / 1000.0));
@@ -407,6 +412,33 @@ public class ReviewCommand implements Callable<Integer> {
             case "code-smells" -> CodeReviewer.ReviewFocus.CODE_SMELLS;
             default -> CodeReviewer.ReviewFocus.ALL;
         };
+    }
+
+    /**
+     * 尝试将审查结果写入 UnifiedIssueStore
+     * 只在交互模式中有效；独立运行时安全地跳过
+     */
+    private void tryWriteToStore(ConsolePrinter printer, CodeReviewer.ReviewResult result) {
+        try {
+            // 尝试从 parent (HarmonyAgentCLI) 中获取 storeSession（通过反射）
+            java.lang.reflect.Field storeSessionField = HarmonyAgentCLI.class.getDeclaredField("storeSession");
+            storeSessionField.setAccessible(true);
+            Object storeSessionObj = storeSessionField.get(parent);
+
+            if (storeSessionObj != null && storeSessionObj instanceof StoreSession) {
+                StoreSession session = (StoreSession) storeSessionObj;
+                UnifiedIssueStore store = session.getStore();
+
+                // 将审查结果添加到 Store
+                store.addIssues(result.getIssues());
+                printer.info("💾 Review results added to unified store (" + result.getIssues().size() + " issues)");
+            }
+        } catch (NoSuchFieldException | IllegalAccessException | ClassCastException e) {
+            // 不在交互模式中或 storeSession 不可用，安全地跳过
+            logger.debug("Not in interactive mode or StoreSession not available: {}", e.getMessage());
+        } catch (Exception e) {
+            logger.warn("Failed to write review results to store: {}", e.getMessage());
+        }
     }
 
     /**

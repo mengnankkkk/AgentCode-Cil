@@ -12,6 +12,8 @@ import com.harmony.agent.core.model.IssueCategory;
 import com.harmony.agent.core.model.ScanResult;
 import com.harmony.agent.core.model.SecurityIssue;
 import com.harmony.agent.core.report.JsonReportWriter;
+import com.harmony.agent.core.store.StoreSession;
+import com.harmony.agent.core.store.UnifiedIssueStore;
 import com.harmony.agent.llm.provider.LLMProvider;
 import com.harmony.agent.llm.provider.ProviderFactory;
 import org.slf4j.Logger;
@@ -754,4 +756,38 @@ public class RefactorCommand implements Callable<Integer> {
 
         return modelAlias;
     }
+
+    /**
+     * 从 UnifiedIssueStore 中查询已知漏洞
+     * 用于在重构时避免遗漏相邻问题或产生新的问题
+     *
+     * @param filePath 要查询的文件路径
+     * @return 该文件中的已知漏洞列表（如果不在交互模式中则返回空列表）
+     */
+    private List<SecurityIssue> getKnownIssuesFromStore(String filePath) {
+        try {
+            // 尝试从 parent (HarmonyAgentCLI) 中获取 storeSession（通过反射）
+            java.lang.reflect.Field storeSessionField = HarmonyAgentCLI.class.getDeclaredField("storeSession");
+            storeSessionField.setAccessible(true);
+            Object storeSessionObj = storeSessionField.get(parent);
+
+            if (storeSessionObj != null && storeSessionObj instanceof StoreSession) {
+                StoreSession session = (StoreSession) storeSessionObj;
+                UnifiedIssueStore store = session.getStore();
+
+                // 查询该文件的所有已知漏洞
+                List<SecurityIssue> issues = store.getIssuesByFile(filePath);
+                logger.info("Found {} known issues in file {} from Store", issues.size(), filePath);
+                return issues;
+            }
+        } catch (NoSuchFieldException | IllegalAccessException | ClassCastException e) {
+            // 不在交互模式中或 storeSession 不可用，安全地跳过
+            logger.debug("StoreSession not available for file {}: {}", filePath, e.getMessage());
+        } catch (Exception e) {
+            logger.warn("Failed to query known issues from store for {}: {}", filePath, e.getMessage());
+        }
+
+        return new ArrayList<>();  // 返回空列表作为后备
+    }
+
 }

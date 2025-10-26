@@ -11,6 +11,7 @@ import com.harmony.agent.core.model.ScanResult;
 import com.harmony.agent.core.model.SecurityIssue;
 import com.harmony.agent.core.report.ReportGenerator;
 import com.harmony.agent.core.scanner.CodeScanner;
+import com.harmony.agent.core.store.UnifiedIssueStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -195,6 +196,27 @@ public class AnalysisEngine {
                 logger.error("Failed to generate report", e);
                 // Don't fail the entire analysis if report generation fails
             }
+        }
+
+        return result;
+    }
+
+    /**
+     * Run analysis and write results to unified issue store
+     *
+     * 用途：在交互模式中，integrate analysis results into the unified store
+     * for merge with review results and other analyses
+     *
+     * @param store UnifiedIssueStore to write issues to
+     * @return ScanResult (same as analyze())
+     */
+    public ScanResult analyzeWithStore(UnifiedIssueStore store) throws IOException, AnalyzerException {
+        ScanResult result = analyze();
+
+        // 将结果写入 Store
+        if (store != null && result != null) {
+            store.addIssues(result.getIssues());
+            logger.info("Wrote {} issues to UnifiedIssueStore", result.getIssues().size());
         }
 
         return result;

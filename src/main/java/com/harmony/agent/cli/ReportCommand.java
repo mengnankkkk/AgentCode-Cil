@@ -1,5 +1,8 @@
 package com.harmony.agent.cli;
 
+import com.harmony.agent.core.model.ScanResult;
+import com.harmony.agent.core.report.JsonReportWriter;
+import com.harmony.agent.core.store.UnifiedIssueStore;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.Option;
@@ -7,6 +10,7 @@ import picocli.CommandLine.ParentCommand;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.concurrent.Callable;
 
 /**

@@ -8,6 +8,7 @@ import com.harmony.agent.autofix.PendingChange;
 import com.harmony.agent.autofix.AppliedChange;
 import com.harmony.agent.cli.completion.CommandCompleter;
 import com.harmony.agent.config.ConfigManager;
+import com.harmony.agent.core.store.StoreSession;
 import com.harmony.agent.llm.LLMClient;
 import com.harmony.agent.task.TodoListManager;
 import com.harmony.agent.tools.ToolExecutor;
@@ -91,6 +92,7 @@ public class InteractiveCommand implements Callable<Integer> {
     private AutoFixOrchestrator autoFixOrchestrator;  // NEW: Auto-fix orchestrator
     private ChangeManager changeManager;  // NEW: Change manager for /accept and /rollback
     private AnalysisResult lastAnalysisResult;  // NEW: Store last analyze result for /autofix
+    private StoreSession storeSession;  // NEW: Unified issue store session for analyze/review/report integration
 
     // System command execution support
     private File currentWorkingDirectory;
@@ -156,6 +158,10 @@ public class InteractiveCommand implements Callable<Integer> {
             CodeValidator codeValidator = new CodeValidator(toolExecutor, currentWorkingDirectory);
             autoFixOrchestrator = new AutoFixOrchestrator(llmClient, codeValidator);
             changeManager = new ChangeManager();
+
+            // Initialize StoreSession for unified issue store
+            storeSession = new StoreSession();
+            printer.info("初始化统一问题存储会话: " + storeSession.getSessionId());
 
             // Show welcome message
             showWelcome();
@@ -320,6 +326,16 @@ public class InteractiveCommand implements Callable<Integer> {
             case "exit":
             case "quit":
             case "q":
+                // 【NEW】尝试保存会话到磁盘
+                try {
+                    if (storeSession != null && storeSession.getStore().getTotalIssueCount() > 0) {
+                        printer.info("💾 保存会话数据...");
+                        storeSession.save();
+                        printer.success("✓ 会话已保存到 ~/.harmony-agent/session-cache.json");
+                    }
+                } catch (Exception e) {
+                    printer.warning("⚠️  警告：无法保存会话: " + e.getMessage());
+                }
                 printer.success("Goodbye!");
                 running = false;
                 break;
@@ -401,6 +417,14 @@ public class InteractiveCommand implements Callable<Integer> {
 
             case "rollback":
                 handleRollbackCommand();
+                break;
+
+            case "report":
+                handleReportCommand(args);
+                break;
+
+            case "session":
+                handleSessionCommand(args);
                 break;
 
             default:
@@ -581,63 +605,91 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
-     * Handle /analyze command - Enhanced with Strategic Analysis
+     * Handle /analyze command - Static analysis only, results written to Store
      */
     private void handleAnalyzeCommand(String args) {
         if (args.isEmpty()) {
             printer.error("Usage: /analyze <path> [options]");
             printer.info("Options:");
             printer.info("  -l, --level <level>           Analysis level: quick | standard | deep");
-            printer.info("  -o, --output <file>          Output HTML report file");
-            printer.info("  --compile-commands <file>    Path to compile_commands.json");
-            printer.info("  --incremental                Enable incremental analysis");
-            printer.info("  --ai                         Enable AI-enhanced analysis (disabled by default)");
-            printer.info("  --strategic                  Enable strategic analysis (NEW!)");
             printer.blank();
             printer.info("Examples:");
-            printer.info("  /analyze src/main -l quick -o report.html");
-            printer.info("  /analyze src/main --strategic    # Strategic analysis with scoring & triage");
-            return;
-        }
-
-        // Check if strategic analysis is requested
-        if (args.contains("--strategic")) {
-            handleStrategicAnalyzeCommand(args.replace("--strategic", "").trim());
+            printer.info("  /analyze src/main");
+            printer.info("  /analyze src/main -l quick");
             return;
         }
 
         try {
-            // Create AnalyzeCommand instance
-            AnalyzeCommand analyzeCmd = new AnalyzeCommand();
+            // 解析参数获取分析路径
+            String[] argParts = parseCommandLineArgs(args);
+            String path = argParts[0];
 
-            // Parse arguments using picocli
-            String[] argArray = parseCommandLineArgs(args);
-            picocli.CommandLine cmd = new picocli.CommandLine(analyzeCmd);
-
-            // Set parent for printer and config access
-            java.lang.reflect.Field parentField = AnalyzeCommand.class.getDeclaredField("parent");
-            parentField.setAccessible(true);
-            parentField.set(analyzeCmd, parent);
-
-            // Parse and execute
-            int exitCode = cmd.execute(argArray);
-
-            // Show completion message
-            printer.blank();
-            if (exitCode == 0) {
-                printer.success("✅ Analysis completed successfully - no critical issues found!");
-            } else if (exitCode == 2) {
-                printer.warning("⚠️  Analysis completed - critical issues detected!");
-                printer.info("Review the results above or check the HTML report if generated");
-            } else {
-                printer.error("❌ Analysis failed with exit code: " + exitCode);
+            // 验证路径存在
+            File targetPath = resolveDirectory(path);
+            if (!targetPath.exists()) {
+                printer.error("Path not found: " + path);
+                return;
             }
 
-        } catch (picocli.CommandLine.ParameterException e) {
-            printer.error("Invalid arguments: " + e.getMessage());
-            printer.info("Type /analyze without arguments for usage help");
+            printer.blank();
+            printer.header("Running Static Analysis");
+            printer.info("Path: " + targetPath.getAbsolutePath());
+            printer.info("Mode: Pure Static Analysis (no AI enhancement)");
+
+            // 调用 AnalysisEngine 进行静态分析
+            printer.spinner("Analyzing...", false);
+            com.harmony.agent.core.AnalysisEngine.AnalysisConfig config = 
+                com.harmony.agent.core.AnalysisEngine.AnalysisConfig.fromConfigManager();
+            com.harmony.agent.core.AnalysisEngine engine =
+                new com.harmony.agent.core.AnalysisEngine(targetPath.getAbsolutePath(), config);
+            com.harmony.agent.core.model.ScanResult scanResult = engine.analyze();
+            printer.spinner("Analyzing", true);
+            printer.blank();
+
+            if (scanResult == null) {
+                printer.error("Analysis returned null result");
+                return;
+            }
+
+            // 将结果写入 Store
+            java.util.List<com.harmony.agent.core.model.SecurityIssue> issues = scanResult.getIssues();
+            if (issues != null && !issues.isEmpty()) {
+                storeSession.getStore().addIssues(issues);
+                printer.success("✅ 分析完成！");
+                printer.keyValue("  发现问题数", String.valueOf(issues.size()));
+                printer.keyValue("  已写入统一存储", "是");
+
+                // 统计严重级别
+                long critical = issues.stream()
+                    .filter(i -> i.getSeverity() == com.harmony.agent.core.model.IssueSeverity.CRITICAL)
+                    .count();
+                long high = issues.stream()
+                    .filter(i -> i.getSeverity() == com.harmony.agent.core.model.IssueSeverity.HIGH)
+                    .count();
+                long medium = issues.stream()
+                    .filter(i -> i.getSeverity() == com.harmony.agent.core.model.IssueSeverity.MEDIUM)
+                    .count();
+                long low = issues.stream()
+                    .filter(i -> i.getSeverity() == com.harmony.agent.core.model.IssueSeverity.LOW)
+                    .count();
+
+                printer.blank();
+                printer.info("问题统计：");
+                if (critical > 0) printer.keyValue("  严重", String.valueOf(critical));
+                if (high > 0) printer.keyValue("  高", String.valueOf(high));
+                if (medium > 0) printer.keyValue("  中", String.valueOf(medium));
+                if (low > 0) printer.keyValue("  低", String.valueOf(low));
+
+            } else {
+                printer.success("✅ 分析完成 - 未发现问题！");
+                printer.keyValue("  已写入统一存储", "是（0个问题）");
+            }
+
+            printer.blank();
+            printer.info("💡 使用 /report -o report.json 生成完整报告");
+
         } catch (Exception e) {
-            printer.error("Analysis failed: " + e.getMessage());
+            printer.error("分析失败: " + e.getMessage());
             if (parent.isVerbose()) {
                 e.printStackTrace();
             }
@@ -1467,6 +1519,169 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
+     * Handle /report command - generate unified report from Store
+     */
+    private void handleReportCommand(String args) {
+        if (args.isEmpty()) {
+            printer.error("使用方法: /report -o <output_file> [--source <path>]");
+            printer.info("示例: /report -o analysis.json");
+            printer.info("示例: /report -o report.html --source src/");
+            return;
+        }
+
+        try {
+            // 简单解析参数
+            String outputFile = null;
+            String sourcePath = ".";
+
+            String[] parts = args.split("\\s+");
+            for (int i = 0; i < parts.length; i++) {
+                if ((parts[i].equals("-o") || parts[i].equals("--output")) && i + 1 < parts.length) {
+                    outputFile = parts[++i];
+                } else if ((parts[i].equals("--source")) && i + 1 < parts.length) {
+                    sourcePath = parts[++i];
+                }
+            }
+
+            if (outputFile == null) {
+                printer.error("必须指定输出文件: -o <file>");
+                return;
+            }
+
+            printer.header("生成统一报告");
+            printer.blank();
+
+            // 检查 Store 是否有数据
+            if (storeSession.getStore().getTotalIssueCount() == 0) {
+                printer.warning("存储中没有问题");
+                printer.info("请先执行: /analyze <path> 或 /review <path>");
+                return;
+            }
+
+            // 显示统计
+            printer.info(storeSession.getStore().getStatistics());
+            printer.blank();
+
+            // 生成报告
+            printer.spinner("生成报告...", false);
+            com.harmony.agent.core.model.ScanResult scanResult = storeSession.getStore().toScanResult(
+                sourcePath,
+                new java.util.ArrayList<>()
+            );
+            printer.spinner("生成报告", true);
+            printer.blank();
+
+            // 写入报告
+            java.nio.file.Path outputPath = java.nio.file.Paths.get(outputFile);
+            java.nio.file.Files.createDirectories(outputPath.getParent());
+
+            if (outputFile.endsWith(".json")) {
+                com.harmony.agent.core.report.JsonReportWriter jsonWriter =
+                    new com.harmony.agent.core.report.JsonReportWriter();
+                jsonWriter.write(scanResult, outputPath);
+                printer.success("✓ JSON 报告已生成: " + outputPath);
+            } else if (outputFile.endsWith(".html")) {
+                com.harmony.agent.core.report.ReportGenerator htmlGenerator =
+                    new com.harmony.agent.core.report.ReportGenerator();
+                htmlGenerator.generate(scanResult, outputPath);
+                printer.success("✓ HTML 报告已生成: " + outputPath);
+
+                // 同时生成 JSON 版本
+                String jsonPath = outputFile.replaceFirst("\\.html$", ".json");
+                if (jsonPath.equals(outputFile)) {
+                    jsonPath = outputFile + ".json";
+                }
+                java.nio.file.Path jsonOutputPath = java.nio.file.Paths.get(jsonPath);
+                com.harmony.agent.core.report.JsonReportWriter jsonWriter =
+                    new com.harmony.agent.core.report.JsonReportWriter();
+                jsonWriter.write(scanResult, jsonOutputPath);
+                printer.info("  同时生成 JSON 报告: " + jsonOutputPath);
+            } else {
+                printer.warning("未知的文件格式（应为 .json 或 .html）");
+                return;
+            }
+
+            printer.blank();
+
+            // 显示统计
+            printer.subheader("报告统计");
+            printer.keyValue("  总问题数", String.valueOf(scanResult.getTotalIssueCount()));
+            printer.keyValue("  严重问题", String.valueOf(
+                scanResult.getIssues().stream()
+                    .filter(i -> i.getSeverity() == com.harmony.agent.core.model.IssueSeverity.CRITICAL)
+                    .count()
+            ));
+            printer.keyValue("  高优先级", String.valueOf(
+                scanResult.getIssues().stream()
+                    .filter(i -> i.getSeverity() == com.harmony.agent.core.model.IssueSeverity.HIGH)
+                    .count()
+            ));
+            printer.blank();
+
+        } catch (Exception e) {
+            printer.error("报告生成失败: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle /session command - manage session state
+     */
+    private void handleSessionCommand(String args) {
+        if (args.isEmpty() || args.equalsIgnoreCase("info")) {
+            // Display session info
+            printer.header("会话信息");
+            printer.blank();
+            if (storeSession != null) {
+                printer.info(storeSession.getStatistics());
+                printer.blank();
+            }
+            printer.info("使用方法:");
+            printer.info("  /session info          显示会话统计");
+            printer.info("  /session clear         清空会话数据");
+            printer.info("  /session load          从磁盘加载上次的会话（重启时自动执行）");
+            return;
+        }
+
+        if (args.equalsIgnoreCase("clear")) {
+            if (storeSession != null) {
+                printer.spinner("正在清空会话...", false);
+                storeSession.clear();
+                printer.spinner("正在清空会话", true);
+                printer.blank();
+                printer.success("✓ 会话已清空");
+            }
+            return;
+        }
+
+        if (args.equalsIgnoreCase("load")) {
+            try {
+                printer.spinner("正在加载会话...", false);
+                java.nio.file.Path cachePath = StoreSession.getDefaultSessionCachePath();
+                if (java.nio.file.Files.exists(cachePath)) {
+                    storeSession = new StoreSession(cachePath);
+                    printer.spinner("正在加载会话", true);
+                    printer.blank();
+                    printer.success("✓ 会话已加载");
+                    printer.info(storeSession.getStatistics());
+                } else {
+                    printer.spinner("正在加载会话", true);
+                    printer.blank();
+                    printer.info("没有找到缓存的会话文件: " + cachePath);
+                }
+            } catch (Exception e) {
+                printer.error("加载会话失败: " + e.getMessage());
+            }
+            return;
+        }
+
+        printer.error("未知的会话命令: " + args);
+        printer.info("使用 /session info 查看帮助");
+    }
+
+    /**
      * Show available commands
      */
     private void showHelp() {
@@ -1487,8 +1702,10 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.keyValue("  /suggest [file]", "Get AI suggestions for fixes");
         printer.keyValue("  /refactor [file]", "Get refactoring recommendations");
         printer.keyValue("  /review <path>", "AI-powered code review (NEW!)");
+        printer.keyValue("  /report -o <file>", "Generate unified report from analyze/review (NEW!)");
         printer.info("  💡 Strategic analysis includes T1.1 Security Scoring + T1.2 Triage Advisor");
         printer.info("  💡 Code review finds bugs, security issues, and improves code quality");
+        printer.info("  💡 Unified report merges results from all analyses");
         printer.blank();
 
         printer.subheader("Auto-Fix (NEW!)");
@@ -1520,6 +1737,7 @@ public class InteractiveCommand implements Callable<Integer> {
         printer.subheader("General");
         printer.keyValue("  /config", "Show current configuration");
         printer.keyValue("  /history", "Show conversation history");
+        printer.keyValue("  /session [info|clear|load]", "Manage session state (NEW!)");
         printer.keyValue("  /clear", "Clear screen");
         printer.keyValue("  /help", "Show this help");
         printer.keyValue("  /exit", "Exit interactive mode");

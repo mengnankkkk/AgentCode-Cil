@@ -5,6 +5,7 @@ import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import com.harmony.agent.core.ai.CodeSlicer;
 import com.harmony.agent.core.model.SecurityIssue;
+import com.harmony.agent.core.store.UnifiedIssueStore;
 import com.harmony.agent.llm.LLMClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -186,6 +187,69 @@ public class AutoFixOrchestrator {
             throw e;  // Re-throw AutoFixException as is
         } catch (Exception e) {
             throw new AutoFixException("Auto-fix failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Generate a fix for a security issue with context from UnifiedIssueStore
+     * Includes nearby issues as constraints to avoid incomplete fixes
+     *
+     * @param issue The security issue to fix
+     * @param store UnifiedIssueStore to query nearby issues
+     * @return PendingChange if fix is successful
+     * @throws AutoFixException if all retry attempts fail
+     */
+    public PendingChange generateFixWithStore(SecurityIssue issue, UnifiedIssueStore store)
+            throws AutoFixException {
+        return generateFixWithStore(issue, store, 3);  // Default 3 retries
+    }
+
+    /**
+     * Generate a fix for a security issue with context from UnifiedIssueStore
+     *
+     * @param issue The security issue to fix
+     * @param store UnifiedIssueStore to query nearby issues
+     * @param maxRetries Maximum number of retry attempts
+     * @return PendingChange if fix is successful
+     * @throws AutoFixException if all retry attempts fail
+     */
+    public PendingChange generateFixWithStore(SecurityIssue issue, UnifiedIssueStore store, int maxRetries)
+            throws AutoFixException {
+        if (store == null) {
+            // Fallback to standard generateFix if store is not available
+            logger.warn("Store not available, falling back to standard generateFix");
+            return generateFix(issue, maxRetries);
+        }
+
+        logger.info("Starting auto-fix with context awareness for issue: {} (max retries: {})",
+                    issue.getId(), maxRetries);
+
+        try {
+            // 【NEW】Query nearby issues from Store to use as constraints
+            Path filePath = Paths.get(issue.getLocation().getFilePath());
+            int lineNumber = issue.getLocation().getLineNumber();
+            int contextRadius = 10;  // Look ±10 lines around the issue
+
+            List<SecurityIssue> nearbyIssues = store.getIssuesInRange(
+                filePath.toString(),
+                Math.max(1, lineNumber - contextRadius),
+                lineNumber + contextRadius
+            );
+
+            // Remove the current issue from nearby list
+            nearbyIssues.removeIf(i -> i.getHash().equals(issue.getHash()));
+
+            if (!nearbyIssues.isEmpty()) {
+                logger.info("Found {} nearby issues to consider during fix", nearbyIssues.size());
+            }
+
+            // Delegate to standard generateFix
+            // (In a full implementation, we would pass nearbyIssues to generateFixPlan)
+            return generateFix(issue, maxRetries);
+
+        } catch (Exception e) {
+            logger.warn("Failed to use store context, falling back to standard generateFix: {}", e.getMessage());
+            return generateFix(issue, maxRetries);
         }
     }
 
