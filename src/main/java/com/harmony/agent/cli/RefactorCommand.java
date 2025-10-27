@@ -442,7 +442,15 @@ public class RefactorCommand implements Callable<Integer> {
 
                 // ===== [G] Generate: 生成 Rust 代码 =====
                 printer.info("🔄 [G] Generating Rust code...");
-                String rustCode = rustGenerator.generateRustCode(cFile);
+
+                // 从 Store 中查询已知的安全问题，作为上下文约束
+                List<SecurityIssue> knownIssuesForFile = getKnownIssuesFromStore(relativePath.toString());
+                if (!knownIssuesForFile.isEmpty()) {
+                    printer.info("Found " + knownIssuesForFile.size() + " known security issue(s) in this file - will be fixed during migration");
+                }
+
+                // 生成 Rust 代码，考虑已知的安全问题
+                String rustCode = rustGenerator.generateRustCode(cFile, knownIssuesForFile);
 
                 // 检查是否生成成功
                 if (rustCode.startsWith("// ERROR:")) {

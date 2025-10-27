@@ -33,7 +33,8 @@
       "Read(//tmp/**)",
       "Bash(python:*)",
       "mcp__open-websearch__fetchGithubReadme",
-      "mcp__open-websearch__search"
+      "mcp__open-websearch__search",
+      "Bash(xargs:*)"
     ],
     "deny": [],
     "ask": []

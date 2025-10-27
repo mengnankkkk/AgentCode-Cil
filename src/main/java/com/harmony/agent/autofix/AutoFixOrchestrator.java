@@ -87,11 +87,11 @@ public class AutoFixOrchestrator {
                     // Step 2: Planner - Generate or regenerate fix plan
                     if (attempt == 0) {
                         // Initial plan
-                        currentPlan = generateFixPlan(issue, oldCodeSlice, null);
+                        currentPlan = generateFixPlan(issue, oldCodeSlice, null, null);
                         logger.info("Initial fix plan generated with {} steps", currentPlan.size());
                     } else {
                         // Regenerate plan with failure feedback
-                        currentPlan = generateFixPlan(issue, oldCodeSlice, lastFailureReason);
+                        currentPlan = generateFixPlan(issue, oldCodeSlice, lastFailureReason, null);
                         logger.info("Regenerated fix plan with {} steps (based on failure feedback)", currentPlan.size());
                     }
 
@@ -225,7 +225,7 @@ public class AutoFixOrchestrator {
                     issue.getId(), maxRetries);
 
         try {
-            // 【NEW】Query nearby issues from Store to use as constraints
+            // Query nearby issues from Store to use as constraints
             Path filePath = Paths.get(issue.getLocation().getFilePath());
             int lineNumber = issue.getLocation().getLineNumber();
             int contextRadius = 10;  // Look ±10 lines around the issue
@@ -243,14 +243,161 @@ public class AutoFixOrchestrator {
                 logger.info("Found {} nearby issues to consider during fix", nearbyIssues.size());
             }
 
-            // Delegate to standard generateFix
-            // (In a full implementation, we would pass nearbyIssues to generateFixPlan)
-            return generateFix(issue, maxRetries);
+            // Build contextual constraints string
+            String contextualConstraints = buildContextualConstraints(nearbyIssues);
 
+            // Extract code context
+            if (!Files.exists(filePath)) {
+                throw new AutoFixException("File not found: " + filePath);
+            }
+
+            String oldCodeSlice = codeSlicer.getContextSlice(filePath, lineNumber);
+            logger.info("Extracted code slice: {} lines", oldCodeSlice.split("\n").length);
+
+            // Retry loop with context awareness
+            String lastFailureReason = null;
+            List<String> currentPlan = null;
+
+            for (int attempt = 0; attempt < maxRetries; attempt++) {
+                logger.info("=== Attempt {}/{} ===", attempt + 1, maxRetries);
+
+                try {
+                    // Step 2: Planner - Generate or regenerate fix plan with context
+                    if (attempt == 0) {
+                        // Initial plan with context constraints
+                        currentPlan = generateFixPlan(issue, oldCodeSlice, null, contextualConstraints);
+                        logger.info("Initial fix plan generated with {} steps (context-aware)", currentPlan.size());
+                    } else {
+                        // Regenerate plan with failure feedback and context
+                        currentPlan = generateFixPlan(issue, oldCodeSlice, lastFailureReason, contextualConstraints);
+                        logger.info("Regenerated fix plan with {} steps (based on failure feedback)", currentPlan.size());
+                    }
+
+                    // Step 3: Coder - Implement fix
+                    String newCodeSlice = generateFixedCode(oldCodeSlice, currentPlan, issue);
+                    logger.info("Fixed code generated: {} lines", newCodeSlice.split("\n").length);
+
+                    // Step 4: Reviewer - Review changes
+                    ReviewResult reviewResult = reviewCodeChange(oldCodeSlice, newCodeSlice, currentPlan, issue);
+                    logger.info("Code review completed: {}", reviewResult.isPassed() ? "PASS" : "FAIL");
+
+                    if (!reviewResult.isPassed()) {
+                        lastFailureReason = String.format(
+                            "Review FAILED (Attempt %d/%d): %s\n" +
+                            "Issues found:\n%s\n" +
+                            "Previous plan was:\n%s\n" +
+                            "Create a NEW plan that addresses these review issues.",
+                            attempt + 1, maxRetries,
+                            reviewResult.getReason(),
+                            formatIssues(reviewResult.getIssues()),
+                            formatPlan(currentPlan)
+                        );
+                        logger.warn("Review failed: {}", reviewResult.getReason());
+                        continue;
+                    }
+
+                    // Step 5: CodeValidator - ACTUALLY compile and validate
+                    CodeValidator.ValidationResult validationResult =
+                        codeValidator.validateCodeChange(filePath, newCodeSlice, issue);
+                    logger.info("Validation completed: {}", validationResult.isPassed() ? "PASS" : "FAIL");
+
+                    if (!validationResult.isPassed()) {
+                        lastFailureReason = String.format(
+                            "Validation FAILED (Attempt %d/%d): %s\n" +
+                            "Compilation/Analysis errors:\n%s\n" +
+                            "Previous plan was:\n%s\n" +
+                            "Create a NEW plan that produces compilable, correct code.",
+                            attempt + 1, maxRetries,
+                            validationResult.getReason(),
+                            formatIssues(validationResult.getIssues()),
+                            formatPlan(currentPlan)
+                        );
+                        logger.warn("Validation failed: {}", validationResult.getReason());
+                        continue;
+                    }
+
+                    // SUCCESS! Both review and validation passed
+                    logger.info("✅ Auto-fix successful on attempt {}/{}", attempt + 1, maxRetries);
+
+                    // Step 6: Create pending change
+                    int startLine = lineNumber - 5;
+                    int endLine = startLine + oldCodeSlice.split("\n").length - 1;
+
+                    PendingChange pendingChange = new PendingChange(
+                        generateChangeId(),
+                        issue,
+                        filePath,
+                        startLine,
+                        endLine,
+                        oldCodeSlice,
+                        newCodeSlice,
+                        currentPlan,
+                        reviewResult,
+                        validationResult
+                    );
+
+                    logger.info("Pending change created: {}", pendingChange.getSummary());
+                    return pendingChange;
+
+                } catch (AutoFixException e) {
+                    if (attempt == maxRetries - 1) {
+                        throw e;
+                    }
+                    logger.warn("Attempt {}/{} failed with exception: {}", attempt + 1, maxRetries, e.getMessage());
+                    lastFailureReason = String.format(
+                        "Attempt %d/%d failed with error: %s\nCreate a simpler, more robust plan.",
+                        attempt + 1, maxRetries, e.getMessage()
+                    );
+                }
+            }
+
+            throw new AutoFixException(String.format(
+                "Auto-fix failed after %d attempts. Last failure: %s",
+                maxRetries,
+                lastFailureReason != null ? lastFailureReason : "Unknown error"
+            ));
+
+        } catch (AutoFixException e) {
+            throw e;
         } catch (Exception e) {
-            logger.warn("Failed to use store context, falling back to standard generateFix: {}", e.getMessage());
-            return generateFix(issue, maxRetries);
+            throw new AutoFixException("Auto-fix failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Build contextual constraints from nearby issues
+     * Formats issue information to add to LLM prompts to improve fix quality
+     *
+     * @param nearbyIssues Issues found near the current issue
+     * @return Formatted string describing nearby issues, or empty string if none
+     */
+    private String buildContextualConstraints(List<SecurityIssue> nearbyIssues) {
+        if (nearbyIssues == null || nearbyIssues.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder constraints = new StringBuilder();
+        constraints.append("\n⚠️  相邻问题约束（在修复时需要同时考虑）：\n");
+
+        for (int i = 0; i < nearbyIssues.size(); i++) {
+            SecurityIssue issue = nearbyIssues.get(i);
+            constraints.append(String.format(
+                "  [%d] 第 %d 行：%s（%s）\n" +
+                "      描述：%s\n",
+                i + 1,
+                issue.getLocation().getLineNumber(),
+                issue.getTitle(),
+                issue.getSeverity().getDisplayName(),
+                issue.getDescription()
+            ));
+        }
+
+        constraints.append("\n重要提示：\n" +
+                "- 这些相邻问题可能与当前问题相关\n" +
+                "- 如果修复会影响相邻代码，请确保也修复这些问题\n" +
+                "- 避免在修复当前问题时引入新的相邻问题\n");
+
+        return constraints.toString();
     }
 
     /**
@@ -293,8 +440,10 @@ public class AutoFixOrchestrator {
      * @param issue The security issue to fix
      * @param oldCodeSlice The code context
      * @param failureFeedback Optional feedback from previous failed attempt (null for initial plan)
+     * @param contextualConstraints Optional contextual constraints from nearby issues
      */
-    private List<String> generateFixPlan(SecurityIssue issue, String oldCodeSlice, String failureFeedback)
+    private List<String> generateFixPlan(SecurityIssue issue, String oldCodeSlice, String failureFeedback,
+                                         String contextualConstraints)
         throws AutoFixException {
 
         String prompt;
@@ -314,6 +463,7 @@ public class AutoFixOrchestrator {
                 ```c
                 %s
                 ```
+                %s
 
                 要求：
                 1. 输出 JSON 数组格式，包含具体的修复步骤
@@ -331,7 +481,8 @@ public class AutoFixOrchestrator {
                 issue.getDescription(),
                 issue.getSeverity(),
                 issue.getCategory().getDisplayName(),
-                oldCodeSlice
+                oldCodeSlice,
+                contextualConstraints != null ? contextualConstraints : ""
             );
         } else {
             // Replanning with failure feedback
@@ -348,6 +499,7 @@ public class AutoFixOrchestrator {
                 ```c
                 %s
                 ```
+                %s
 
                 ⚠️ 上次失败的原因：
                 %s
@@ -369,6 +521,7 @@ public class AutoFixOrchestrator {
                 issue.getSeverity(),
                 issue.getCategory().getDisplayName(),
                 oldCodeSlice,
+                contextualConstraints != null ? contextualConstraints : "",
                 failureFeedback
             );
         }

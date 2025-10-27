@@ -3,12 +3,14 @@ package com.harmony.agent.core.ai;
 import com.harmony.agent.llm.model.LLMRequest;
 import com.harmony.agent.llm.model.LLMResponse;
 import com.harmony.agent.llm.provider.LLMProvider;
+import com.harmony.agent.core.model.SecurityIssue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Rust Code Generator - 将完整的 C/C++ 文件转换为 Rust 代码
@@ -46,6 +48,17 @@ public class RustCodeGenerator {
      * @return 生成的 Rust 代码（完整的 .rs 文件内容）
      */
     public String generateRustCode(Path cFile) {
+        return generateRustCode(cFile, null);
+    }
+
+    /**
+     * 将完整的 C/C++ 文件转换为 Rust 代码，考虑已知的安全问题
+     *
+     * @param cFile C/C++ 源文件路径
+     * @param knownIssues 该文件中的已知安全问题列表（可为 null）
+     * @return 生成的 Rust 代码（完整的 .rs 文件内容）
+     */
+    public String generateRustCode(Path cFile, List<SecurityIssue> knownIssues) {
         logger.info("Generating Rust code for entire file: {}", cFile);
 
         try {
@@ -59,8 +72,8 @@ public class RustCodeGenerator {
 
             logger.debug("Read {} characters from {}", cCode.length(), cFile.getFileName());
 
-            // 2. 构建提示词
-            String prompt = buildFullFileConversionPrompt(cFile.getFileName().toString(), cCode);
+            // 2. 构建提示词（包括安全约束）
+            String prompt = buildFullFileConversionPrompt(cFile.getFileName().toString(), cCode, knownIssues);
 
             // 3. 构建 LLM 请求
             LLMRequest request = LLMRequest.builder()
@@ -121,20 +134,50 @@ public class RustCodeGenerator {
      * 构建完整文件转换的提示词
      */
     private String buildFullFileConversionPrompt(String fileName, String cCode) {
-        return String.format(
-            "Convert the following C/C++ file to Rust.\n\n" +
-            "Source file: %s\n\n" +
-            "```c\n%s\n```\n\n" +
-            "Generate a complete Rust file (.rs) with:\n" +
-            "- All necessary use statements\n" +
-            "- Type-safe conversions\n" +
-            "- Proper error handling\n" +
-            "- Idiomatic Rust code\n" +
-            "- Comments for complex conversions\n\n" +
-            "Output ONLY the Rust code (no markdown, no explanations):",
-            fileName,
-            cCode
-        );
+        return buildFullFileConversionPrompt(fileName, cCode, null);
+    }
+
+    /**
+     * 构建完整文件转换的提示词，包含安全约束
+     */
+    private String buildFullFileConversionPrompt(String fileName, String cCode, List<SecurityIssue> knownIssues) {
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append("Convert the following C/C++ file to Rust.\n\n")
+              .append("Source file: ").append(fileName).append("\n\n")
+              .append("```c\n")
+              .append(cCode)
+              .append("\n```\n\n");
+
+        // 添加安全问题约束
+        if (knownIssues != null && !knownIssues.isEmpty()) {
+            prompt.append("⚠️ 已知安全问题（在迁移时必须修复）：\n\n");
+            for (int i = 0; i < knownIssues.size(); i++) {
+                SecurityIssue issue = knownIssues.get(i);
+                prompt.append(String.format(
+                    "[%d] %s（%s）\n    描述：%s\n\n",
+                    i + 1,
+                    issue.getTitle(),
+                    issue.getSeverity().getDisplayName(),
+                    issue.getDescription()
+                ));
+            }
+
+            prompt.append("重要提示：\n")
+                  .append("- 在 Rust 代码中修复上述所有已知安全问题\n")
+                  .append("- 利用 Rust 的安全特性（借用检查、内存安全等）来解决这些问题\n")
+                  .append("- 在代码中添加注释说明如何处理这些问题\n\n");
+        }
+
+        prompt.append("Generate a complete Rust file (.rs) with:\n")
+              .append("- All necessary use statements\n")
+              .append("- Type-safe conversions\n")
+              .append("- Proper error handling\n")
+              .append("- Idiomatic Rust code\n")
+              .append("- Comments for complex conversions\n\n")
+              .append("Output ONLY the Rust code (no markdown, no explanations):");
+
+        return prompt.toString();
     }
 
     /**
