@@ -23,11 +23,14 @@ public class LLMOrchestrator {
     private final ProviderFactory providerFactory;
     private final RoleFactory roleFactory;
     private final Map<String, RoleConfig> roleConfigs;
+    private final AIMemoryManager aiMemoryManager;
 
     public LLMOrchestrator(ProviderFactory providerFactory, RoleFactory roleFactory) {
         this.providerFactory = providerFactory;
         this.roleFactory = roleFactory;
         this.roleConfigs = new HashMap<>();
+        this.aiMemoryManager = new AIMemoryManager();
+        logger.info("LLMOrchestrator initialized with AI memory management");
     }
 
     /**
@@ -153,6 +156,13 @@ public class LLMOrchestrator {
             .filter(line -> line.matches("^\\d+\\..*"))
             .map(line -> line.replaceFirst("^\\d+\\.\\s*", ""))
             .toList();
+    }
+
+    /**
+     * Get AI Memory Manager for storing/retrieving memories
+     */
+    public AIMemoryManager getAIMemoryManager() {
+        return aiMemoryManager;
     }
 
     /**

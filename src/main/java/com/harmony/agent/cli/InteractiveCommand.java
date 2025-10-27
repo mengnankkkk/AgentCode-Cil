@@ -93,6 +93,7 @@ public class InteractiveCommand implements Callable<Integer> {
     private ChangeManager changeManager;  // NEW: Change manager for /accept and /rollback
     private AnalysisResult lastAnalysisResult;  // NEW: Store last analyze result for /autofix
     private StoreSession storeSession;  // NEW: Unified issue store session for analyze/review/report integration
+    private com.harmony.agent.llm.orchestrator.AIMemoryManager aiMemoryManager;  // NEW: AI 记忆管理器
 
     // System command execution support
     private File currentWorkingDirectory;
@@ -162,6 +163,10 @@ public class InteractiveCommand implements Callable<Integer> {
             // Initialize StoreSession for unified issue store
             storeSession = new StoreSession();
             printer.info("初始化统一问题存储会话: " + storeSession.getSessionId());
+
+            // Initialize AIMemoryManager for storing AI memories
+            aiMemoryManager = new com.harmony.agent.llm.orchestrator.AIMemoryManager();
+            printer.info("初始化 AI 记忆管理器");
 
             // Show welcome message
             showWelcome();
@@ -490,6 +495,27 @@ public class InteractiveCommand implements Callable<Integer> {
             case "ls":
                 // Translate ls to appropriate command for platform
                 handleLsCommand(command);
+                break;
+
+            // 【新增】文件操作命令
+            case "read":
+                handleReadCommand(command);
+                break;
+
+            case "write":
+                handleWriteCommand(command);
+                break;
+
+            case "append":
+                handleAppendCommand(command);
+                break;
+
+            case "search":
+                handleSearchCommand(command);
+                break;
+
+            case "grep":
+                handleGrepCommand(command);
                 break;
 
             case "cat":
@@ -1985,6 +2011,36 @@ public class InteractiveCommand implements Callable<Integer> {
     }
 
     /**
+     * 解析文件路径（支持相对路径、绝对路径和 ~ 展开）
+     *
+     * @param path 要解析的路径
+     * @return 解析后的 File 对象
+     */
+    private File resolveFile(String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return currentWorkingDirectory;
+        }
+
+        path = path.trim();
+
+        // 处理 ~ (主目录)
+        if (path.startsWith("~")) {
+            String home = System.getProperty("user.home");
+            path = home + path.substring(1);
+        }
+
+        File file = new File(path);
+
+        // 如果是绝对路径，直接使用
+        if (file.isAbsolute()) {
+            return file;
+        }
+
+        // 相对路径 - 相对于当前工作目录解析
+        return new File(currentWorkingDirectory, path);
+    }
+
+    /**
      * Check if running on Windows
      *
      * @return true if Windows, false otherwise
@@ -2025,5 +2081,291 @@ public class InteractiveCommand implements Callable<Integer> {
         }
 
         return true;
+    }
+
+    /**
+     * Handle read command - read file content
+     * Usage: $read <filepath> [maxLines]
+     */
+    private void handleReadCommand(String command) {
+        String[] parts = command.substring(4).trim().split("\\s+", 2);
+        if (parts.length == 0 || parts[0].isEmpty()) {
+            printer.error("Usage: $read <filepath> [maxLines]");
+            return;
+        }
+
+        String filePath = parts[0];
+        int maxLines = -1;
+        if (parts.length > 1) {
+            try {
+                maxLines = Integer.parseInt(parts[1]);
+            } catch (NumberFormatException e) {
+                printer.error("Invalid maxLines parameter: " + parts[1]);
+                return;
+            }
+        }
+
+        try {
+            File file = resolveFile(filePath);
+            if (!file.exists()) {
+                printer.error("File not found: " + file.getAbsolutePath());
+                return;
+            }
+            if (!file.isFile()) {
+                printer.error("Not a file: " + file.getAbsolutePath());
+                return;
+            }
+
+            // Read file content
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(file.toPath());
+            int displayLines = maxLines > 0 ? Math.min(maxLines, lines.size()) : lines.size();
+
+            printer.blank();
+            printer.header("📄 File: " + file.getAbsolutePath() + " (" + lines.size() + " lines)");
+            printer.blank();
+
+            for (int i = 0; i < displayLines; i++) {
+                printer.info(String.format("%4d | %s", i + 1, lines.get(i)));
+            }
+
+            if (displayLines < lines.size()) {
+                printer.warning(String.format("... (%d more lines)", lines.size() - displayLines));
+            }
+            printer.blank();
+
+            // 将文件内容存储到 AI 记忆
+            String fullContent = String.join("\n", lines);
+            aiMemoryManager.rememberFile(file.getAbsolutePath(), fullContent);
+
+        } catch (Exception e) {
+            printer.error("Failed to read file: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle write command - write content to file
+     * Usage: $write <filepath> <content>
+     */
+    private void handleWriteCommand(String command) {
+        String args = command.substring(5).trim();
+        String[] parts = args.split("\\s+", 2);
+
+        if (parts.length < 2) {
+            printer.error("Usage: $write <filepath> <content>");
+            return;
+        }
+
+        String filePath = parts[0];
+        String content = parts[1];
+
+        try {
+            File file = resolveFile(filePath);
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+
+            java.nio.file.Files.write(file.toPath(), content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            printer.success("✓ File written: " + file.getAbsolutePath());
+
+        } catch (Exception e) {
+            printer.error("Failed to write file: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle append command - append content to file
+     * Usage: $append <filepath> <content>
+     */
+    private void handleAppendCommand(String command) {
+        String args = command.substring(6).trim();
+        String[] parts = args.split("\\s+", 2);
+
+        if (parts.length < 2) {
+            printer.error("Usage: $append <filepath> <content>");
+            return;
+        }
+
+        String filePath = parts[0];
+        String content = parts[1];
+
+        try {
+            File file = resolveFile(filePath);
+            File parentDir = file.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                parentDir.mkdirs();
+            }
+
+            // Append with newline
+            String toAppend = content + "\n";
+            java.nio.file.Files.write(
+                file.toPath(),
+                toAppend.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND
+            );
+            printer.success("✓ Content appended to: " + file.getAbsolutePath());
+
+        } catch (Exception e) {
+            printer.error("Failed to append to file: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle search command - search for files by pattern
+     * Usage: $search <pattern> <directory> [-r for recursive]
+     */
+    private void handleSearchCommand(String command) {
+        String args = command.substring(6).trim();
+        String[] parts = args.split("\\s+");
+
+        if (parts.length < 1) {
+            printer.error("Usage: $search <pattern> [directory] [-r]");
+            return;
+        }
+
+        String pattern = parts[0];
+        String searchDir = parts.length > 1 ? parts[1] : ".";
+        boolean recursive = args.contains("-r");
+
+        try {
+            File dir = resolveDirectory(searchDir);
+            if (!dir.exists() || !dir.isDirectory()) {
+                printer.error("Directory not found: " + dir.getAbsolutePath());
+                return;
+            }
+
+            java.util.List<String> matches = new java.util.ArrayList<>();
+            searchFiles(dir, pattern, matches, recursive);
+
+            printer.blank();
+            printer.header("🔍 Search Results for: " + pattern);
+            printer.info("Directory: " + dir.getAbsolutePath() + (recursive ? " (recursive)" : ""));
+            printer.blank();
+
+            if (matches.isEmpty()) {
+                printer.warning("No files found matching: " + pattern);
+            } else {
+                for (String match : matches) {
+                    printer.info(match);
+                }
+                printer.blank();
+                printer.info("Total: " + matches.size() + " file(s) found");
+
+                // 将搜索结果存储到 AI 记忆
+                String searchResults = String.join("\n", matches);
+                aiMemoryManager.rememberSearchResult(pattern, searchResults);
+            }
+            printer.blank();
+
+        } catch (Exception e) {
+            printer.error("Search failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handle grep command - search for content in files
+     * Usage: $grep <pattern> <filepath>
+     */
+    private void handleGrepCommand(String command) {
+        String args = command.substring(4).trim();
+        String[] parts = args.split("\\s+", 2);
+
+        if (parts.length < 2) {
+            printer.error("Usage: $grep <pattern> <filepath>");
+            return;
+        }
+
+        String pattern = parts[0];
+        String filePath = parts[1];
+
+        try {
+            File file = resolveFile(filePath);
+            if (!file.exists()) {
+                printer.error("File not found: " + file.getAbsolutePath());
+                return;
+            }
+            if (!file.isFile()) {
+                printer.error("Not a file: " + file.getAbsolutePath());
+                return;
+            }
+
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(file.toPath());
+            java.util.List<String> matches = new java.util.ArrayList<>();
+
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
+                if (line.contains(pattern)) {
+                    matches.add(String.format("%4d | %s", i + 1, line));
+                }
+            }
+
+            printer.blank();
+            printer.header("📋 Grep Results");
+            printer.info("File: " + file.getAbsolutePath());
+            printer.info("Pattern: " + pattern);
+            printer.blank();
+
+            if (matches.isEmpty()) {
+                printer.warning("No lines found containing: " + pattern);
+            } else {
+                for (String match : matches) {
+                    printer.info(match);
+                }
+                printer.blank();
+                printer.info("Total: " + matches.size() + " line(s) found");
+
+                // 将 grep 结果存储到 AI 记忆
+                String grepResults = String.join("\n", matches);
+                aiMemoryManager.rememberSearchResult("grep:" + pattern, grepResults);
+            }
+            printer.blank();
+
+        } catch (Exception e) {
+            printer.error("Grep failed: " + e.getMessage());
+            if (parent.isVerbose()) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Recursively search for files matching pattern
+     */
+    private void searchFiles(File dir, String pattern, java.util.List<String> results, boolean recursive) {
+        if (!dir.isDirectory()) {
+            return;
+        }
+
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+
+        for (File file : files) {
+            if (file.isFile() && file.getName().contains(pattern)) {
+                try {
+                    results.add(file.getCanonicalPath());
+                } catch (java.io.IOException e) {
+                    results.add(file.getAbsolutePath());
+                }
+            }
+
+            if (recursive && file.isDirectory()) {
+                searchFiles(file, pattern, results, true);
+            }
+        }
     }
 }
