@@ -7,6 +7,7 @@ import com.harmony.agent.llm.provider.LLMProvider;
 import com.harmony.agent.llm.provider.ProviderFactory;
 import com.harmony.agent.llm.role.LLMRole;
 import com.harmony.agent.llm.role.RoleFactory;
+import com.harmony.agent.mcp.MCPClientManager;
 import com.harmony.agent.task.TodoList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +20,7 @@ import java.util.Map;
 /**
  * Orchestrates workflow between different LLM roles
  * Manages Provider-Role mapping and execution flow
+ * 支持本地工具和通过 MCP 协议的远程工具调用
  */
 public class LLMOrchestrator {
     private static final Logger logger = LoggerFactory.getLogger(LLMOrchestrator.class);
@@ -28,6 +30,7 @@ public class LLMOrchestrator {
     private final Map<String, RoleConfig> roleConfigs;
     private final AIMemoryManager aiMemoryManager;
     private final List<ToolDefinition> toolDefinitions;
+    private final MCPClientManager mcpClientManager;
     private ToolConfirmationCallback confirmationCallback;  // 工具执行确认回调
 
     public LLMOrchestrator(ProviderFactory providerFactory, RoleFactory roleFactory) {
@@ -36,11 +39,19 @@ public class LLMOrchestrator {
         this.roleConfigs = new HashMap<>();
         this.aiMemoryManager = new AIMemoryManager();
         this.toolDefinitions = new ArrayList<>();
+        this.mcpClientManager = new MCPClientManager();
 
         // 初始化工具定义
         initializeToolDefinitions();
-        logger.info("LLMOrchestrator initialized with AI memory management and {} tools",
-            toolDefinitions.size());
+
+        // 尝试加载 MCP 配置
+        initializeMCPClients();
+
+        int totalTools = toolDefinitions.size() + mcpClientManager.getAllMcpTools().size();
+        logger.info("LLMOrchestrator initialized: {} 本地工具 + {} MCP 工具 = {} 总工具",
+            toolDefinitions.size(),
+            mcpClientManager.getAllMcpTools().size(),
+            totalTools);
     }
 
     /**
@@ -50,6 +61,24 @@ public class LLMOrchestrator {
         roleConfigs.put(roleName, new RoleConfig(providerName, model));
         logger.info("Configured role '{}' to use provider '{}' with model '{}'",
             roleName, providerName, model);
+    }
+
+    /**
+     * 初始化 MCP 客户端
+     * 尝试从 mcp-config.json 加载配置并连接到 MCP 服务
+     * 如果配置文件不存在或连接失败，记录警告但继续运行
+     */
+    private void initializeMCPClients() {
+        String configPath = "mcp-config.json";
+        try {
+            mcpClientManager.loadFromConfig(configPath);
+            logger.info("✅ MCP 客户端已初始化");
+            logger.info(mcpClientManager.getStatistics());
+        } catch (java.io.FileNotFoundException e) {
+            logger.info("ℹ️ MCP 配置文件不存在: {} (将仅使用本地工具)", configPath);
+        } catch (Exception e) {
+            logger.warn("⚠️ 初始化 MCP 客户端失败: {} (将仅使用本地工具)", e.getMessage());
+        }
     }
 
     /**
@@ -554,7 +583,10 @@ public class LLMOrchestrator {
      * @return 工具定义列表，用于声明给 LLM
      */
     public List<ToolDefinition> getToolDefinitions() {
-        return new ArrayList<>(toolDefinitions);
+        List<ToolDefinition> allTools = new ArrayList<>(toolDefinitions);
+        // 添加 MCP 工具定义
+        allTools.addAll(mcpClientManager.getAllMcpTools().values());
+        return allTools;
     }
 
     /**
@@ -677,6 +709,18 @@ public class LLMOrchestrator {
     private String executeToolCall(ToolCall call) {
         String toolName = call.getName();
 
+        // 首先检查是否是 MCP 工具
+        if (mcpClientManager.isMcpTool(toolName)) {
+            try {
+                logger.info("🔌 通过 MCP 客户端调用工具: {}", toolName);
+                return mcpClientManager.callMcpTool(toolName, call.getArguments());
+            } catch (Exception e) {
+                logger.error("❌ MCP 工具调用失败: {}", toolName, e);
+                return "❌ 错误：MCP 工具执行失败 - " + e.getMessage();
+            }
+        }
+
+        // 执行本地工具
         switch (toolName) {
             case "read_file":
                 return executeReadFileTool(call);
@@ -1638,10 +1682,32 @@ public class LLMOrchestrator {
     }
 
     /**
+     * 将命令字符串转换为 ProcessBuilder 可接受的命令数组
+     * 根据操作系统自动选择 shell 包装方式
+     *
+     * @param command 要执行的命令字符串
+     * @return 适合 ProcessBuilder 的命令数组
+     */
+    private String[] getShellCommand(String command) {
+        if (isWindows()) {
+            return new String[]{"cmd", "/c", command};
+        } else {
+            return new String[]{"/bin/bash", "-c", command};
+        }
+    }
+
+    /**
      * Get AI Memory Manager for storing/retrieving memories
      */
     public AIMemoryManager getAIMemoryManager() {
         return aiMemoryManager;
+    }
+
+    /**
+     * 获取 MCP 客户端管理器
+     */
+    public MCPClientManager getMCPClientManager() {
+        return mcpClientManager;
     }
 
     /**

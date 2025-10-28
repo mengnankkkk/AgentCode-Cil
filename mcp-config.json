@@ -1,0 +1,21 @@
+{
+  "mcpServers": [
+    {
+      "name": "local-tools",
+      "transport": "stdio",
+      "command": "bash -c 'java -cp \"./target/classes:./libs/*\" com.harmony.agent.mcp.MCPServerStarter --mode=stdio'"
+    },
+    {
+      "name": "remote-claude-tools",
+      "transport": "http",
+      "host": "localhost",
+      "port": 8080
+    },
+    {
+      "name": "external-tools",
+      "transport": "http",
+      "host": "mcp-server.example.com",
+      "port": 9000
+    }
+  ]
+}
