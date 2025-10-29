@@ -3,19 +3,26 @@ package com.harmony.agent.task;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Manages a list of tasks with progress tracking
+ * 支持存储完整的计划分析结果（包括需求理解、约束、风险等）
  */
 public class TodoList {
+    private static final Logger logger = LoggerFactory.getLogger(TodoList.class);
+
     private final String requirement;
     private final List<Task> tasks;
     private int currentTaskIndex;
+    private String analysisResult; // 存储完整的需求分析和规划结果
 
     public TodoList(String requirement, List<String> taskDescriptions) {
         this.requirement = requirement;
         this.tasks = new ArrayList<>();
         this.currentTaskIndex = 0;
+        this.analysisResult = null;
 
         // Create tasks from descriptions
         for (int i = 0; i < taskDescriptions.size(); i++) {
@@ -58,6 +65,20 @@ public class TodoList {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Skip a task and move to the next one
+     */
+    public void skipTask(int taskId) {
+        for (Task task : tasks) {
+            if (task.getId() == taskId) {
+                task.setStatus(Task.TaskStatus.SKIPPED);
+                currentTaskIndex++;
+                logger.info("任务 {} 已被跳过", taskId);
+                break;
+            }
+        }
     }
 
     /**
@@ -111,6 +132,20 @@ public class TodoList {
     }
 
     /**
+     * Set the complete analysis result (from PlannerRole)
+     */
+    public void setAnalysisResult(String analysisResult) {
+        this.analysisResult = analysisResult;
+    }
+
+    /**
+     * Get the complete analysis result
+     */
+    public String getAnalysisResult() {
+        return analysisResult;
+    }
+
+    /**
      * Get total task count
      */
     public int getTotalTaskCount() {
@@ -126,21 +161,22 @@ public class TodoList {
 
     /**
      * Format as display string
+     * 支持显示完整的分析结果或仅任务列表
      */
     public String toDisplayString(boolean showAll) {
         StringBuilder sb = new StringBuilder();
         sb.append("\n╔════════════════════════════════════════════════════════════════╗\n");
-        sb.append(String.format("║ 📋 Task List: %s/%s completed (%d%%)%n",
+        sb.append(String.format("║ 📋 任务列表: %s/%s 已完成 (%d%%)%n",
             getCompletedTaskCount(), getTotalTaskCount(), getProgressPercentage()));
         sb.append("╠════════════════════════════════════════════════════════════════╣\n");
-        sb.append(String.format("║ Requirement: %s%n", requirement));
+        sb.append(String.format("║ 需求: %s%n", requirement));
         sb.append("╠════════════════════════════════════════════════════════════════╣\n");
 
         if (showAll) {
             // Show all tasks
             for (Task task : tasks) {
-                String marker = task.isCompleted() ? "[x]" : "[ ]";
-                String arrow = task.isInProgress() ? " ← Current" : "";
+                String marker = task.isCompleted() ? "[x]" : task.isSkipped() ? "[⊘]" : "[ ]";
+                String arrow = task.isInProgress() ? " ← 当前任务" : "";
                 sb.append(String.format("║ %s %d. %s%s%n", marker, task.getId(), task.getDescription(), arrow));
             }
         } else {
@@ -148,10 +184,10 @@ public class TodoList {
             Optional<Task> current = getCurrentTask();
             if (current.isPresent()) {
                 Task task = current.get();
-                sb.append(String.format("║ Current Task: [%d/%d]%n", currentTaskIndex + 1, tasks.size()));
+                sb.append(String.format("║ 当前任务: [%d/%d]%n", currentTaskIndex + 1, tasks.size()));
                 sb.append(String.format("║ → %s%n", task.getDescription()));
             } else {
-                sb.append("║ ✓ All tasks completed!%n");
+                sb.append("║ ✓ 所有任务已完成！%n");
             }
         }
 

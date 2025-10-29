@@ -114,21 +114,26 @@ public class LLMOrchestrator {
 
     /**
      * Analyze requirement and create todo list
+     * 现在使用 PlannerRole 而不是 AnalyzerRole，以获得更结构化的分析结果
      */
     public TodoList analyzeRequirement(String requirement) {
-        logger.info("Analyzing requirement...");
+        logger.info("Analyzing requirement using PlannerRole...");
 
         ConversationContext context = new ConversationContext(requirement);
-        LLMResponse response = executeRole("analyzer", requirement, context);
+        // 使用 planner 角色进行需求分析和规划，而不是 analyzer
+        LLMResponse response = executeRole("planner", requirement, context);
 
         if (!response.isSuccess()) {
             logger.error("Failed to analyze requirement: {}", response.getErrorMessage());
             return null;
         }
 
-        // Parse response into todo list
+        // 解析响应中的任务列表
         List<String> tasks = parseTasksFromResponse(response.getContent());
         TodoList todoList = new TodoList(requirement, tasks);
+
+        // 将完整的分析结果存储到 TodoList 的元数据中
+        todoList.setAnalysisResult(response.getContent());
 
         context.setTodoList(todoList);
         return todoList;

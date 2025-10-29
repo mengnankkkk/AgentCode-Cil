@@ -35,7 +35,8 @@
       "mcp__open-websearch__fetchGithubReadme",
       "mcp__open-websearch__search",
       "Bash(xargs:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []

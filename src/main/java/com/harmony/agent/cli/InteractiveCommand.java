@@ -574,19 +574,32 @@ public class InteractiveCommand implements Callable<Integer> {
 
     /**
      * Handle /plan command - create a task breakdown from requirement
+     * 使用 PlannerRole 进行需求分析并创建任务列表
      */
     private void handlePlanCommand(String args) {
         if (args.isEmpty()) {
-            printer.error("Usage: /plan <requirement>");
-            printer.info("Example: /plan Analyze src/main for security issues");
+            printer.error("用法: /plan <需求描述>");
+            printer.blank();
+            printer.info("示例:");
+            printer.info("  /plan 为项目添加安全审计功能");
+            printer.info("  /plan 将代码从 Java 重构为 Rust");
+            printer.info("  /plan 分析 src/main 目录是否存在安全漏洞");
+            printer.blank();
+            printer.info("创建任务计划后，使用以下命令:");
+            printer.info("  /next      - 执行当前任务");
+            printer.info("  /tasks     - 显示所有任务");
+            printer.info("  /current   - 显示当前任务");
             return;
         }
 
         // Check if there's already an active todo list
         if (todoListManager.hasActiveTodoList()) {
-            printer.warning("There's already an active task plan.");
-            printer.info("Current progress: " + todoListManager.getProgressSummary());
-            printer.info("Use /next to continue, or /tasks to view all tasks");
+            printer.warning("当前已有活跃的任务计划。");
+            printer.info("当前进度: " + todoListManager.getProgressSummary());
+            printer.info("使用 /next 继续执行，或 /tasks 查看所有任务");
+            printer.blank();
+            printer.info("若要创建新计划，请先完成或清除当前计划:");
+            printer.info("  /clear - 清除当前任务计划");
             return;
         }
 
@@ -596,10 +609,12 @@ public class InteractiveCommand implements Callable<Integer> {
 
     /**
      * Handle /next or /execute command - execute current task
+     * 根据任务类型自动路由到合适的角色执行
      */
     private void handleExecuteCommand() {
         if (!todoListManager.hasActiveTodoList()) {
-            printer.warning("No active task plan. Use /plan <requirement> to create one.");
+            printer.warning("没有活跃的任务计划。");
+            printer.info("使用 /plan <需求> 创建一个新的任务计划。");
             return;
         }
 
@@ -611,7 +626,8 @@ public class InteractiveCommand implements Callable<Integer> {
      */
     private void handleTasksCommand() {
         if (!todoListManager.hasActiveTodoList()) {
-            printer.warning("No active task plan. Use /plan <requirement> to create one.");
+            printer.warning("没有活跃的任务计划。");
+            printer.info("使用 /plan <需求> 创建一个新的任务计划。");
             return;
         }
 
@@ -623,7 +639,8 @@ public class InteractiveCommand implements Callable<Integer> {
      */
     private void handleCurrentTaskCommand() {
         if (!todoListManager.hasActiveTodoList()) {
-            printer.warning("No active task plan. Use /plan <requirement> to create one.");
+            printer.warning("没有活跃的任务计划。");
+            printer.info("使用 /plan <需求> 创建一个新的任务计划。");
             return;
         }
 

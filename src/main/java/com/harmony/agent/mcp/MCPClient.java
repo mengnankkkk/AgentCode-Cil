@@ -185,14 +185,19 @@ public class MCPClient {
         var toolsArray = response.getAsJsonObject("result").getAsJsonArray("tools");
         for (var toolElement : toolsArray) {
             var toolObj = toolElement.getAsJsonObject();
-            ToolDefinition toolDef = new ToolDefinition();
-            toolDef.setName(toolObj.get("name").getAsString());
-            toolDef.setDescription(toolObj.get("description").getAsString());
+            String toolName = toolObj.get("name").getAsString();
+            String toolDescription = toolObj.get("description").getAsString();
+
+            ToolDefinition.Builder builder = ToolDefinition.builder()
+                .name(toolName)
+                .description(toolDescription);
 
             if (toolObj.has("inputSchema")) {
-                toolDef.setParameters(gson.fromJson(toolObj.get("inputSchema"), Map.class));
+                Map<String, Object> parameters = gson.fromJson(toolObj.get("inputSchema"), Map.class);
+                builder.parameters(parameters);
             }
 
+            ToolDefinition toolDef = builder.build();
             tools.put(toolDef.getName(), toolDef);
         }
 

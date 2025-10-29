@@ -395,32 +395,41 @@ public class LLMClient {
 
     /**
      * Determine which role should handle a task
+     * 支持中文和英文任务描述
      */
     private String determineRoleForTask(String taskDescription) {
         String lower = taskDescription.toLowerCase();
 
-        // Design, architecture, planning tasks
+        // Design, architecture, planning tasks (English & Chinese)
         if (lower.contains("design") || lower.contains("architect") ||
-            lower.contains("plan") || lower.contains("strategy")) {
+            lower.contains("plan") || lower.contains("strategy") ||
+            taskDescription.contains("设计") || taskDescription.contains("架构") ||
+            taskDescription.contains("规划") || taskDescription.contains("方案")) {
             return "planner";
         }
 
-        // Code implementation tasks
+        // Code implementation tasks (English & Chinese)
         if (lower.contains("implement") || lower.contains("code") ||
             lower.contains("write") || lower.contains("create") ||
-            lower.contains("develop")) {
+            lower.contains("develop") ||
+            taskDescription.contains("实现") || taskDescription.contains("编写") ||
+            taskDescription.contains("代码") || taskDescription.contains("开发")) {
             return "coder";
         }
 
-        // Review, analyze, verify tasks
+        // Review, analyze, verify tasks (English & Chinese)
         if (lower.contains("review") || lower.contains("verify") ||
-            lower.contains("check") || lower.contains("validate")) {
+            lower.contains("check") || lower.contains("validate") ||
+            taskDescription.contains("审查") || taskDescription.contains("审核") ||
+            taskDescription.contains("验证") || taskDescription.contains("检查")) {
             return "reviewer";
         }
 
-        // Analysis tasks
+        // Analysis tasks (English & Chinese)
         if (lower.contains("analyze") || lower.contains("identify") ||
-            lower.contains("find") || lower.contains("detect")) {
+            lower.contains("find") || lower.contains("detect") ||
+            taskDescription.contains("分析") || taskDescription.contains("识别") ||
+            taskDescription.contains("查找") || taskDescription.contains("检测")) {
             return "analyzer";
         }
 
@@ -433,10 +442,10 @@ public class LLMClient {
      */
     private String executeFallback(String taskDescription) {
         return String.format(
-            "Task '%s' queued for execution.\n" +
-            "Note: Real LLM execution requires API keys. " +
-            "Set OPENAI_API_KEY or CLAUDE_API_KEY environment variable.\n" +
-            "Current mode: Fallback/Demo mode",
+            "任务 '%s' 已排队等待执行。\n" +
+            "注意：真实 LLM 执行需要 API 密钥。\n" +
+            "请设置 OPENAI_API_KEY 或 CLAUDE_API_KEY 环境变量。\n" +
+            "当前模式：回退/演示模式",
             taskDescription
         );
     }
