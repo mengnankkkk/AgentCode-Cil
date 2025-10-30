@@ -159,39 +159,96 @@ public class TodoList {
         return (int) tasks.stream().filter(Task::isCompleted).count();
     }
 
+    // ANSI 颜色代码
+    private static final String RESET = "\u001B[0m";
+    private static final String CYAN = "\u001B[36m";
+    private static final String GRAY = "\u001B[90m";
+    private static final String BRIGHT_BLUE = "\u001B[94m";
+
     /**
-     * Format as display string
-     * 支持显示完整的分析结果或仅任务列表
+     * 生成进度条字符串 - Claude Code风格
+     * 例如：████░░░░░░ 4/10
+     */
+    private String generateProgressBar(int completed, int total) {
+        if (total == 0) return "";
+        int barLength = 10;
+        int filledLength = (completed * barLength) / total;
+
+        StringBuilder bar = new StringBuilder();
+        // 使用ANSI颜色的进度条
+        bar.append(CYAN);
+        for (int i = 0; i < filledLength; i++) {
+            bar.append("█");
+        }
+        bar.append(RESET);
+        for (int i = filledLength; i < barLength; i++) {
+            bar.append("░");
+        }
+        return bar.toString();
+    }
+
+    /**
+     * Format as display string - Claude Code 现代风格
+     * 简洁、美观、清晰的待办列表显示，支持ANSI颜色
      */
     public String toDisplayString(boolean showAll) {
+        // 空状态处理
+        if (tasks.isEmpty()) {
+            return "\n  " + GRAY + "📭 Empty Fast\n" + RESET;
+        }
+
         StringBuilder sb = new StringBuilder();
-        sb.append("\n╔════════════════════════════════════════════════════════════════╗\n");
-        sb.append(String.format("║ 📋 任务列表: %s/%s 已完成 (%d%%)%n",
-            getCompletedTaskCount(), getTotalTaskCount(), getProgressPercentage()));
-        sb.append("╠════════════════════════════════════════════════════════════════╣\n");
-        sb.append(String.format("║ 需求: %s%n", requirement));
-        sb.append("╠════════════════════════════════════════════════════════════════╣\n");
+        int completed = getCompletedTaskCount();
+        int total = getTotalTaskCount();
+        int progress = getProgressPercentage();
+
+        // 使用简洁的现代化样式
+        sb.append("\n");
+
+        // 标题行：任务清单和进度
+        String progressBar = generateProgressBar(completed, total);
+        sb.append(String.format("  %s📋 Tasks%s %s %2d%%%n", BRIGHT_BLUE, RESET, progressBar, progress));
 
         if (showAll) {
-            // Show all tasks
+            // 显示所有任务的详细列表
+            sb.append("\n");
+            int index = 0;
             for (Task task : tasks) {
-                String marker = task.isCompleted() ? "[x]" : task.isSkipped() ? "[⊘]" : "[ ]";
-                String arrow = task.isInProgress() ? " ← 当前任务" : "";
-                sb.append(String.format("║ %s %d. %s%s%n", marker, task.getId(), task.getDescription(), arrow));
+                String displayLine = task.getDisplayString();
+                if (task.isInProgress()) {
+                    sb.append(String.format("  %s◄%s%s%n", CYAN, RESET, displayLine));
+                } else {
+                    sb.append(String.format("  %s%n", displayLine));
+                }
+                index++;
             }
         } else {
-            // Show only current task
+            // 简洁模式：仅显示当前任务
             Optional<Task> current = getCurrentTask();
             if (current.isPresent()) {
                 Task task = current.get();
-                sb.append(String.format("║ 当前任务: [%d/%d]%n", currentTaskIndex + 1, tasks.size()));
-                sb.append(String.format("║ → %s%n", task.getDescription()));
+                String compactDisplay = task.getCompactDisplayString();
+                sb.append(String.format("  %s◄%s %s%n", CYAN, RESET, compactDisplay));
             } else {
-                sb.append("║ ✓ 所有任务已完成！%n");
+                sb.append("  ✓ All tasks completed\n");
             }
         }
 
-        sb.append("╚════════════════════════════════════════════════════════════════╝\n");
+        sb.append("\n");
         return sb.toString();
+    }
+
+    /**
+     * 生成详细的任务清单显示（包含所有任务）
+     */
+    public String toDetailedDisplayString() {
+        return toDisplayString(true);
+    }
+
+    /**
+     * 生成简洁的任务显示（仅显示当前任务）
+     */
+    public String toSimpleDisplayString() {
+        return toDisplayString(false);
     }
 }

@@ -115,6 +115,125 @@ public class Task {
         return lastErrorMessage;
     }
 
+    /**
+     * 获取任务耗时（仅当任务完成时有效）
+     * 返回格式：例如 "2m 30s" 或 "15s"
+     */
+    public String getDuration() {
+        if (completedAt == null || createdAt == null) {
+            return null;
+        }
+        long seconds = java.time.temporal.ChronoUnit.SECONDS.between(createdAt, completedAt);
+        if (seconds < 60) {
+            return seconds + "s";
+        }
+        long minutes = seconds / 60;
+        long remainingSeconds = seconds % 60;
+        if (remainingSeconds == 0) {
+            return minutes + "m";
+        }
+        return minutes + "m " + remainingSeconds + "s";
+    }
+
+    // ANSI 颜色代码
+    private static final String RESET = "\u001B[0m";
+    private static final String GREEN = "\u001B[32m";
+    private static final String CYAN = "\u001B[36m";
+    private static final String YELLOW = "\u001B[33m";
+    private static final String RED = "\u001B[31m";
+    private static final String GRAY = "\u001B[90m";
+    private static final String DIM = "\u001B[2m";
+
+    /**
+     * 获取美化后的显示字符串（用于列表显示）
+     * 采用Claude Code风格的现代化显示格式，支持ANSI颜色
+     */
+    public String getDisplayString() {
+        String statusIcon;
+        String colorCode;
+
+        switch (status) {
+            case PENDING:
+                statusIcon = "○";
+                colorCode = GRAY;
+                break;
+            case IN_PROGRESS:
+                statusIcon = "►";
+                colorCode = CYAN;
+                break;
+            case COMPLETED:
+                statusIcon = "✓";
+                colorCode = GREEN;
+                break;
+            case SKIPPED:
+                statusIcon = "✗";
+                colorCode = RED;
+                break;
+            default:
+                statusIcon = "?";
+                colorCode = RESET;
+        }
+
+        String displayText = description;
+        String durationStr = "";
+
+        if (status == TaskStatus.COMPLETED) {
+            // 已完成的任务显示为删除线格式
+            displayText = DIM + "~~" + description + "~~" + RESET;
+            // 显示耗时信息
+            String duration = getDuration();
+            if (duration != null) {
+                durationStr = " " + GRAY + duration + RESET;
+            }
+        } else if (status == TaskStatus.SKIPPED) {
+            // 已跳过的任务显示为删除线格式
+            displayText = DIM + description + RESET;
+            String duration = getDuration();
+            if (duration != null) {
+                durationStr = " " + GRAY + duration + RESET;
+            }
+        }
+
+        return String.format("  %s%s%s %s%s%s", colorCode, statusIcon, RESET, displayText, durationStr, RESET);
+    }
+
+    /**
+     * 获取简洁显示字符串（仅用于简洁模式）
+     */
+    public String getCompactDisplayString() {
+        String statusIcon;
+        String colorCode;
+
+        switch (status) {
+            case PENDING:
+                statusIcon = "○";
+                colorCode = GRAY;
+                break;
+            case IN_PROGRESS:
+                statusIcon = "►";
+                colorCode = CYAN;
+                break;
+            case COMPLETED:
+                statusIcon = "✓";
+                colorCode = GREEN;
+                break;
+            case SKIPPED:
+                statusIcon = "✗";
+                colorCode = RED;
+                break;
+            default:
+                statusIcon = "?";
+                colorCode = RESET;
+        }
+
+        String displayText = description;
+        if (status == TaskStatus.COMPLETED || status == TaskStatus.SKIPPED) {
+            displayText = DIM + description + RESET;
+        }
+
+        return String.format("%s%s%s %s", colorCode, statusIcon, RESET, displayText);
+    }
+
     @Override
     public String toString() {
         String statusSymbol = switch (status) {
