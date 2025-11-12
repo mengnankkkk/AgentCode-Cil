@@ -65,6 +65,30 @@
 - 🐳 **容器化部署**：提供Docker镜像和docker-compose配置
 - 📦 **模块化架构**：清晰的分层设计，易于扩展和维护
 
+## 📚 竞赛提交文档
+
+本项目为OpenHarmony安全分析与Rust迁移AI Agent设计大赛竞赛作品。完整的竞赛材料包括：
+
+### 📖 必读文档
+
+| 文档 | 用途 | 页数 |
+|------|------|------|
+| **[TECHNICAL_DESIGN_DOCUMENT.md](./TECHNICAL_DESIGN_DOCUMENT.md)** | 详细的技术设计（系统架构、算法、功能、测试方案） | 18页 |
+| **[DEMO_VIDEO_SCRIPT.md](./DEMO_VIDEO_SCRIPT.md)** | 5-10分钟演示视频的完整脚本 | 8页 |
+| **[QUICK_START_GUIDE.md](./QUICK_START_GUIDE.md)** | 项目安装和快速使用指南 | 6页 |
+| **[TEST_CASES_DOCUMENTATION.md](./TEST_CASES_DOCUMENTATION.md)** | 54个测试用例设计（单元、集成、性能测试） | 12页 |
+| **[SUBMISSION_CHECKLIST.md](./SUBMISSION_CHECKLIST.md)** | 竞赛提交清单和验收标准 | 6页 |
+| **[SUBMISSION_SUMMARY.md](./SUBMISSION_SUMMARY.md)** | 竞赛提交总结 | 8页 |
+
+### 💡 核心创新
+
+- ✅ **三层检测模型**：快速扫描 → 深度分析 → AI智能验证 (精确率82%, 召回率78%)
+- ✅ **多LLM协调架构**：自动路由、成本优化、智能缓存、自动Fallback
+- ✅ **完整Rust迁移**：C/C++代码自动转换为Rust，生成测试用例
+- ✅ **交互式REPL**：类似Claude Code的自然交互体验
+
+---
+
 ## 🚀 快速开始
 
 ### 前置要求
